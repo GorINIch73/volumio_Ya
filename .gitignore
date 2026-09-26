@@ -1,0 +1,6 @@
+.dev/
+.venv-token/
+dist/*
+!dist/.gitkeep
+__pycache__/
+*.pyc

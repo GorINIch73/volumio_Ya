@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#121212">
+  <title>Музыка · Media Str</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/main.js" defer></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="/" aria-label="Главная"><span class="brand-mark">м</span> Музыка<span class="badge">dev</span></a>
+    <nav aria-label="Разделы">
+      <button class="nav active" data-tab="home" aria-current="page">Главная</button>
+      <button class="nav" data-tab="account">Аккаунт</button>
+      <button class="nav" data-tab="maintenance">Обслуживание</button>
+      <button class="nav" data-tab="logs">Логи</button>
+    </nav>
+    <div class="sidebar-bottom"><span id="connection" class="connection">Подключение…</span><small>Media Str для Volumio</small></div>
+  </aside>
+  <main>
+    <header><span class="eyebrow">ВАША МУЗЫКА ДОМА</span><span id="version" class="version">—</span></header>
+    <section id="home" class="tab">
+      <h1>На вашей волне</h1>
+      <p class="intro">Сенсорный экран и телефон. Один плеер.</p>
+      <div class="wave-card"><div class="wave-art" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div><div class="wave-copy"><span class="eyebrow">ЯНДЕКС МУЗЫКА</span><h2>Моя волна</h2><p>Подключение к музыкальному плагину появится на следующем этапе.</p><button disabled class="primary">Плеер ещё не подключён</button></div></div>
+      <div class="section-title"><h2>Первый запуск</h2><span class="badge">0.1</span></div>
+      <div class="cards"><article class="card"><span class="step">01</span><h3>Интерфейс готов</h3><p>Откройте этот адрес на телефоне или сенсорном экране.</p></article><article class="card"><span class="step">02</span><h3>Обновления в браузере</h3><p>Проверьте новую сборку и установите её прямо из GitHub.</p><button class="text-button" data-tab="maintenance">Открыть обслуживание →</button></article><article class="card"><span class="step">03</span><h3>Диагностика рядом</h3><p>Если что-то пошло не так, скачайте логи для разбора.</p><button class="text-button" data-tab="logs">Посмотреть логи →</button></article></div>
+    </section>
+    <section id="account" class="tab" hidden>
+      <h1>Аккаунт Яндекса</h1><p class="intro">Войдите по токену Яндекс Музыки.</p>
+      <article class="card">
+        <span class="eyebrow">ЯНДЕКС МУЗЫКА</span><h2 id="account-name">Аккаунт не подключён</h2>
+        <p id="account-details">После входа здесь появится ваш аккаунт.</p>
+        <form id="account-form">
+          <label class="file-label" for="yandex-token">Токен доступа</label>
+          <input id="yandex-token" name="yandex-token" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Вставьте токен Яндекс Музыки" maxlength="8192" required>
+          <p class="small">Можно использовать тот же токен, что и в плагине achechulin. После проверки поле очистится; сохранённый токен не возвращается в браузер.</p>
+          <div class="actions"><button id="account-login" class="primary" type="submit">Войти по токену</button><button id="account-check" class="secondary" type="button" disabled>Проверить подключение</button><button id="account-logout" class="secondary" type="button" disabled>Выйти</button></div>
+        </form>
+        <p id="account-message" class="notice" role="status" aria-live="polite">Готово к подключению</p>
+        <p class="small">Вход сохраняется после обновления приложения. Воспроизведение, лайки и плейлисты будут подключены следующим этапом.</p>
+        <a class="recovery-link" href="https://github.com/GorINIch73/volumio_Ya#настройка-аккаунта-яндекс-музыки-и-получение-токена" target="_blank" rel="noopener noreferrer">Как получить токен ↗</a>
+      </article>
+    </section>
+    <section id="maintenance" class="tab" hidden>
+      <h1>Обслуживание</h1><p class="intro">Новая версия — без повторной установки вручную.</p>
+      <div class="status-grid"><article class="card"><span class="eyebrow">ИНТЕРФЕЙС</span><h2 id="app-version">—</h2><p id="app-health">Проверяем состояние…</p></article><article class="card"><span class="eyebrow">СЕРВИС ОБСЛУЖИВАНИЯ</span><h2 id="service-version">—</h2><p id="runtime">Python —</p></article></div>
+      <article class="card update-card">
+        <h2>Обновление из репозитория</h2>
+        <p><a href="https://github.com/GorINIch73/volumio_Ya" target="_blank" rel="noopener noreferrer">GorINIch73/volumio_Ya ↗</a></p>
+        <p id="repository-info">Проверьте, появилась ли новая сборка.</p>
+        <p id="installed-commit" class="small"></p>
+        <div class="actions"><button id="repository-check" class="secondary">Проверить обновления</button><button id="repository-install" class="primary" disabled>Установить из GitHub</button></div>
+        <p id="job" class="notice" role="status" aria-live="polite">Готово</p>
+        <p class="small">Скачивание и установка выполняются на Raspberry. При ошибке запуска предыдущая версия восстановится автоматически.</p>
+      </article>
+      <details class="card manual-update"><summary>Загрузить ZIP вручную</summary>
+        <p>Запасной способ для локальной сборки. Лимит — 16 МБ.</p>
+        <label class="file-label" for="package">Пакет приложения (.zip)</label><input id="package" type="file" accept=".zip,application/zip">
+        <div class="actions"><button id="update" class="primary" disabled>Установить файл</button></div>
+      </details>
+      <div class="actions"><button id="rollback" class="secondary" disabled>Вернуть предыдущую версию</button></div>
+      <p class="small">Обновляется приложение и его интерфейс. Сервис обслуживания обновляется установщиком. Текущая версия не перезапускает Volumio и не меняет музыкальный плагин.</p>
+      <a href="/maintenance" class="recovery-link">Резервная страница восстановления ↗</a>
+    </section>
+    <section id="logs" class="tab" hidden>
+      <h1>Логи</h1><p class="intro">События приложения и обновлений. Логи Volumio пока не подключены.</p>
+      <div class="log-toolbar"><label>Уровень <select id="level"><option value="all">Все</option><option value="ERROR">Ошибки</option><option value="WARNING">Предупреждения</option><option value="INFO">Информация</option></select></label><button id="pause" class="secondary" aria-pressed="false">Пауза</button><button id="copy" class="secondary">Копировать</button><a class="secondary" href="/api/logs/download" download>Скачать</a></div>
+      <p id="log-message" class="small" role="status"></p><pre id="log-output" tabindex="0" aria-label="Журнал событий">Загрузка…</pre><p class="small">Показываются последние 128 КБ. Известные поля с секретами маскируются; перед отправкой проверьте содержимое отчёта.</p>
+    </section>
+  </main>
+  <footer class="player"><div class="album-placeholder" aria-hidden="true">♪</div><div class="track"><strong>Музыка начнётся здесь</strong><span>Подключите аккаунт в настройках</span></div><div class="transport"><button disabled aria-label="Предыдущий трек"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M5 5h3v14H5zm14 0v14L9 12z"/></svg></button><button disabled aria-label="Воспроизведение" class="play">▶</button><button disabled aria-label="Следующий трек"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M16 5h3v14h-3zM5 5l10 7-10 7z"/></svg></button></div></footer>
+</body>
+</html>
