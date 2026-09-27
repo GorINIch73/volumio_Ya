@@ -13,6 +13,7 @@ let tracksGeneration = 0;
 let collectionKind = null;
 let nextOffset = null;
 let playerConnected = false;
+let loadedBuild = null;
 
 function selectTab(name) {
   activeTab = ['home', 'account', 'maintenance', 'logs'].includes(name) ? name : 'home';
@@ -56,6 +57,15 @@ function buttons() {
 async function pollStatus() {
   try {
     status = await api('/api/status');
+    const build = `${status.release || status.version}|${status.source?.commit || ''}|${status.maintenance_version}`;
+    if (loadedBuild && build !== loadedBuild && status.healthy && status.job.status === 'success') {
+      location.reload();
+      return;
+    }
+    if (!loadedBuild) loadedBuild = build;
+    $('#update-scope').textContent = status.full_updates
+      ? 'Полный пакет обновляет приложение, интерфейс и сервис обслуживания. Пароль и токен сохраняются.'
+      : 'Для полных обновлений нужен однократный запуск установщика 0.3 через SSH.';
     $('#connection').textContent = status.healthy ? 'На связи' : 'Восстановление';
     $('#connection').className = `connection ${status.healthy ? 'online' : 'offline'}`;
     $('#version').textContent = status.version ? `v${status.version}` : 'Нет версии';

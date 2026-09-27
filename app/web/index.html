@@ -58,7 +58,7 @@
         <p id="installed-commit" class="small"></p>
         <div class="actions"><button id="repository-check" class="secondary">Проверить обновления</button><button id="repository-install" class="primary" disabled>Установить из GitHub</button></div>
         <p id="job" class="notice" role="status" aria-live="polite">Готово</p>
-        <p class="small">Скачивание и установка выполняются на Raspberry. При ошибке запуска предыдущая версия восстановится автоматически.</p>
+        <p class="small">Приложение и сервис обслуживания обновляются вместе. Во время перезапуска связь кратко пропадёт; при ошибке запуска восстановится предыдущая версия.</p>
       </article>
       <details class="card manual-update"><summary>Загрузить ZIP вручную</summary>
         <p>Запасной способ для локальной сборки. Лимит — 16 МБ.</p>
@@ -66,7 +66,7 @@
         <div class="actions"><button id="update" class="primary" disabled>Установить файл</button></div>
       </details>
       <div class="actions"><button id="rollback" class="secondary" disabled>Вернуть предыдущую версию</button></div>
-      <p class="small">Обновляется приложение и его интерфейс. Сервис обслуживания обновляется установщиком. Текущая версия не перезапускает Volumio и не меняет музыкальный плагин.</p>
+      <p id="update-scope" class="small">Полный пакет включает приложение, интерфейс и сервис обслуживания. Пароль и аккаунт Яндекса сохраняются. Volumio обновляется отдельно.</p>
       <a href="/maintenance" class="recovery-link">Резервная страница восстановления ↗</a>
     </section>
     <section id="logs" class="tab" hidden>

@@ -166,6 +166,12 @@ def json_request(host, path, *, token=None, payload=None, local=False):
         if isinstance(value, dict) and ("error" in value or "Error" in value or value.get("success") is False):
             raise AccountError("Volumio отклонил команду" if local else "Яндекс отклонил запрос")
         return value
+    except TimeoutError:
+        raise AccountError("Volumio не ответил на команду за 10 секунд. Проверьте состояние плеера перед повтором"
+                           if local else "Яндекс Музыка не ответила за 10 секунд. Попробуйте позже") from None
+    except ConnectionRefusedError:
+        raise AccountError("HTTP API Volumio недоступен на 127.0.0.1:80"
+                           if local else "Нет связи с Яндекс Музыкой") from None
     except (OSError, http.client.HTTPException):
         raise AccountError("Нет связи с Volumio" if local else "Нет связи с Яндекс Музыкой") from None
     except (ValueError, TypeError):
@@ -280,7 +286,9 @@ class Music:
                     raise AccountError("Трек недоступен")
                 track = self.track(values[0])
                 uri = self.stream(token, identifier)
-                item = {"uri": uri, "service": "mpd", "type": "song", "name": track["title"],
+                # Volumio's mpd.explodeUri scans the local library. Its webradio
+                # handler accepts an HTTP stream and preserves the supplied tags.
+                item = {"uri": uri, "service": "webradio", "type": "track", "name": track["title"],
                         "title": track["title"], "artist": track["artist"], "album": track["album"],
                         "duration": track["duration"], "trackType": "mp3"}
                 self.volumio("replaceAndPlay" if action == "play" else "addToQueue", item)

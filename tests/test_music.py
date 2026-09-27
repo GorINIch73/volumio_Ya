@@ -75,6 +75,8 @@ class Music(unittest.TestCase):
         digest = hashlib.md5(b"XGRlBW9FXlekgbPrRHuSiAmusic/file.mp3salt").hexdigest()
         self.assertEqual(item["uri"], f"https://cdn.music.yandex.net/get-mp3/{digest}/65abcdef/music/file.mp3")
         self.assertEqual(item["title"], "Track")
+        self.assertEqual(item["service"], "webradio")
+        self.assertEqual(item["type"], "track")
         self.assertNotIn("secret-token", json.dumps(item))
         self.assertNotIn("uri", result)
 
@@ -95,6 +97,7 @@ class Music(unittest.TestCase):
              patch.object(self.music, "volumio") as volumio:
             self.music.action({"action": "enqueue", "id": "7"})
             self.assertEqual(volumio.call_args.args[0], "addToQueue")
+            self.assertEqual(volumio.call_args.args[1]["service"], "webradio")
             for command in ("toggle", "pause", "stop", "next", "prev"):
                 self.music.action({"action": command})
                 volumio.assert_called_with("commands?cmd=" + command)
@@ -117,6 +120,17 @@ class Music(unittest.TestCase):
             with self.assertRaises(app.AccountError) as caught:
                 self.music.state()
             self.assertNotIn("secret", str(caught.exception))
+
+    def test_timeout_and_connection_refusal_have_distinct_safe_messages(self):
+        for error, expected in ((TimeoutError("private-url"), "10 секунд"),
+                                (ConnectionRefusedError("private-url"), "127.0.0.1:80")):
+            with self.subTest(error=type(error).__name__), patch.object(app.http.client, "HTTPConnection") as connection:
+                connection.return_value.request.side_effect = error
+                with self.assertRaises(app.AccountError) as caught:
+                    self.music.volumio("replaceAndPlay", {"uri": "private-url"})
+                self.assertIn(expected, str(caught.exception))
+                self.assertNotIn("private-url", str(caught.exception))
+                self.assertEqual(connection.return_value.request.call_count, 1)
 
 
 class MusicHTTP(test_yandex_account.AccountHTTP):

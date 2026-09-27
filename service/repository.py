@@ -90,10 +90,13 @@ def make_package(revision, output):
             if item.is_dir():
                 continue
             relative = "/".join(path.parts[1:])
-            if not relative.startswith("app/"):
-                continue
-            name = relative[4:]
-            if name not in ("manifest.json", "app.py") and not name.startswith("web/"):
+            if relative.startswith("app/"):
+                name = relative[4:]
+                if name not in ("manifest.json", "app.py") and not name.startswith("web/"):
+                    continue
+            elif relative.startswith("service/") and "__pycache__" not in path.parts and not relative.endswith((".pyc", "/launcher.py")):
+                name = relative
+            else:
                 continue
             if stat.S_IFMT(item.external_attr >> 16) not in (0, stat.S_IFREG):
                 raise ValueError("В приложении обнаружена ссылка или специальный файл")
@@ -107,6 +110,10 @@ def make_package(revision, output):
     manifest = json.loads(contents.pop("manifest.json"))
     if not isinstance(manifest, dict):
         raise ValueError("Некорректный манифест репозитория")
+    if any(name.startswith("service/") for name in contents):
+        if not {"service/maintenance.py", "service/repository.py"}.issubset(contents):
+            raise ValueError("В репозитории неполный сервис обслуживания")
+        manifest.update(protocol=2, min_launcher=manifest.get("min_launcher", 1))
     manifest["source"] = {"repository": REPOSITORY, "commit": sha}
     manifest["files"] = {name: hashlib.sha256(value).hexdigest() for name, value in contents.items()}
     # The stable supervisor constructs the package itself; repository scripts are not executed.

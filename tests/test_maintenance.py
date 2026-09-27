@@ -46,7 +46,7 @@ class Packages(unittest.TestCase):
         target = self.root / "output"
         target.mkdir()
         manifest = unpack(self.package, target)
-        self.assertEqual(manifest["version"], "0.2.0")
+        self.assertEqual(manifest["version"], "0.3.0")
         self.assertTrue((target / "web/index.html").is_file())
 
     def test_traversal_and_absolute_paths(self):
@@ -117,7 +117,7 @@ class Lifecycle(unittest.TestCase):
 
     def next_version(self, broken=False):
         manifest = json.loads((self.source / "manifest.json").read_text())
-        manifest["version"] = "0.2.0"
+        manifest["version"] = "0.3.0"
         (self.source / "manifest.json").write_text(json.dumps(manifest))
         if broken:
             (self.source / "app.py").write_text("raise RuntimeError('startup failed')")
@@ -128,12 +128,12 @@ class Lifecycle(unittest.TestCase):
         self.next_version()
         self.manager.install(self.package)
         self.assertTrue(self.manager.healthy())
-        self.assertEqual(self.manager.status()["version"], "0.2.0")
+        self.assertEqual(self.manager.status()["version"], "0.3.0")
         self.assertEqual(self.manager.state["previous"], old)
         self.manager.rollback()
         self.assertTrue(self.manager.healthy())
         self.assertEqual(self.manager.state["current"], old)
-        self.assertEqual(self.manager.status()["version"], "0.2.0")
+        self.assertEqual(self.manager.status()["version"], "0.3.0")
 
     def test_failed_start_restores_previous_process_and_state(self):
         old = dict(self.manager.state)
@@ -157,7 +157,7 @@ class Lifecycle(unittest.TestCase):
         self.manager.stop()
         self.manager.boot()
         self.assertTrue(self.manager.healthy())
-        self.assertEqual(self.manager.status()["version"], "0.2.0")
+        self.assertEqual(self.manager.status()["version"], "0.3.0")
 
     def test_boot_rolls_back_broken_current(self):
         self.next_version()
@@ -166,7 +166,7 @@ class Lifecycle(unittest.TestCase):
         (self.manager.release_path(self.manager.state["current"]) / "app.py").write_text("raise RuntimeError('bad boot')")
         self.manager.boot()
         self.assertTrue(self.manager.healthy())
-        self.assertEqual(self.manager.status()["version"], "0.2.0")
+        self.assertEqual(self.manager.status()["version"], "0.3.0")
 
 
 class HTTP(unittest.TestCase):

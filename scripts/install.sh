@@ -30,18 +30,30 @@ chmod 0600 "$PACKAGE_PATH"
 if systemctl is-active --quiet media-str.service; then
     systemctl stop media-str.service
 fi
-if [ -f "$SERVICE_DIR/maintenance.py" ]; then
-    cp -p "$SERVICE_DIR/maintenance.py" "$SERVICE_DIR/maintenance.py.previous"
-fi
+# The bootstrap and frozen recovery service are installed only by this migration.
+# Normal web updates select complete releases under DATA_DIR without sudo.
+BACKUP_DIR=$(mktemp -d /tmp/media-str-bootstrap.XXXXXX)
+for name in maintenance.py repository.py launcher.py; do
+    if [ -f "$SERVICE_DIR/$name" ]; then
+        cp -p "$SERVICE_DIR/$name" "$BACKUP_DIR/$name"
+    fi
+done
+restore_bootstrap() {
+    for name in maintenance.py repository.py launcher.py; do
+        if [ -f "$BACKUP_DIR/$name" ]; then
+            cp -p "$BACKUP_DIR/$name" "$SERVICE_DIR/$name"
+        fi
+    done
+}
+trap 'rm -f "$PACKAGE_PATH"; rm -rf "$BACKUP_DIR"' EXIT HUP INT TERM
 install -m 0755 "$PROJECT_DIR/service/maintenance.py" "$SERVICE_DIR/maintenance.py"
 install -m 0644 "$PROJECT_DIR/service/repository.py" "$SERVICE_DIR/repository.py"
+install -m 0755 "$PROJECT_DIR/service/launcher.py" "$SERVICE_DIR/launcher.py"
 
-if ! runuser -u mediastr -- python3 "$SERVICE_DIR/maintenance.py" --data "$DATA_DIR" --install "$PACKAGE_PATH" --init-only; then
-    echo "Установка приложения не удалась; сохранённые настройки остаются на месте." >&2
-    if [ -f "$SERVICE_DIR/maintenance.py.previous" ]; then
-        cp -p "$SERVICE_DIR/maintenance.py.previous" "$SERVICE_DIR/maintenance.py"
-        systemctl start media-str.service || true
-    fi
+if ! runuser -u mediastr -- python3 "$SERVICE_DIR/launcher.py" --data "$DATA_DIR" --install "$PACKAGE_PATH" --init-only; then
+    echo "Установка не прошла проверку; восстанавливаем прежний загрузчик. Настройки сохранены." >&2
+    restore_bootstrap
+    systemctl start media-str.service || true
     exit 1
 fi
 
@@ -55,7 +67,7 @@ Type=simple
 User=mediastr
 Group=mediastr
 WorkingDirectory=/var/lib/media-str
-ExecStart=/usr/bin/python3 /opt/media-str/maintenance.py --data /var/lib/media-str --host 0.0.0.0 --port 8099
+ExecStart=/usr/bin/python3 /opt/media-str/launcher.py --data /var/lib/media-str --host 0.0.0.0 --port 8099
 Restart=on-failure
 RestartSec=3
 TimeoutStopSec=15
@@ -81,4 +93,5 @@ echo "Откройте http://IP-АДРЕС-VOLUMIO:8099"
 echo "Логин: admin"
 printf 'Пароль: '
 cat "$DATA_DIR/initial-password.txt"
+echo "Дальнейшие обновления приложения и сервиса устанавливаются из Обслуживания."
 echo "Сохраните пароль. Его можно повторно прочитать: sudo cat /var/lib/media-str/initial-password.txt"

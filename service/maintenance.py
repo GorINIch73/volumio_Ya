@@ -29,7 +29,7 @@ import repository
 MAX_PACKAGE = 16 * 1024 * 1024
 MAX_EXPANDED = 32 * 1024 * 1024
 MAX_FILES = 256
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 
 
 def redact(value):
@@ -83,15 +83,22 @@ def unpack(package, destination):
             if (path.is_absolute() or ".." in path.parts or "\\" in name or str(path) != name
                     or not name or item.is_dir() or (stat.S_IFMT(mode) not in (0, stat.S_IFREG))):
                 raise ValueError("Недопустимый путь или тип файла")
-            if name not in ("manifest.json", "app.py") and not name.startswith("web/"):
+            if name not in ("manifest.json", "app.py") and not name.startswith(("web/", "service/")):
                 raise ValueError("Файл за пределами приложения")
         if "manifest.json" not in names or archive.getinfo("manifest.json").file_size > 65536:
             raise ValueError("Отсутствует корректный манифест")
         manifest = json.loads(archive.read("manifest.json"))
         if not isinstance(manifest, dict):
             raise ValueError("Некорректный манифест")
-        if manifest.get("name") != "media-str" or manifest.get("protocol") != 1:
+        protocol = manifest.get("protocol")
+        if manifest.get("name") != "media-str" or type(protocol) is not int or protocol not in (1, 2):
             raise ValueError("Несовместимый формат пакета")
+        if protocol == 2 and (type(manifest.get("min_launcher")) is not int or manifest["min_launcher"] != 1):
+            raise ValueError("Пакет несовместим с загрузчиком обновлений")
+        if "service/launcher.py" in names:
+            raise ValueError("Аварийный загрузчик не входит в веб-пакет")
+        if protocol == 1 and any(name.startswith("service/") for name in names):
+            raise ValueError("Сервис требует полного формата пакета")
         if not re.fullmatch(r"\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?", str(manifest.get("version", ""))):
             raise ValueError("Некорректная версия")
         minimum = manifest.get("min_python")
@@ -104,6 +111,8 @@ def unpack(package, destination):
             raise ValueError("Состав пакета не совпадает с манифестом")
         if not {"app.py", "web/index.html"}.issubset(hashes):
             raise ValueError("В пакете нет приложения или интерфейса")
+        if protocol == 2 and not {"service/maintenance.py", "service/repository.py"}.issubset(hashes):
+            raise ValueError("В полном пакете отсутствует сервис обслуживания")
         contents = {}
         for name, expected in hashes.items():
             data = archive.read(name)
@@ -111,6 +120,9 @@ def unpack(package, destination):
                 raise ValueError("Контрольная сумма файла не совпадает")
             contents[name] = data
         compile(contents["app.py"], "app.py", "exec")
+        for name, content in contents.items():
+            if name.startswith("service/") and name.endswith(".py"):
+                compile(content, name, "exec")
         for name, data in contents.items():
             target = destination / name
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -132,13 +144,22 @@ class Manager:
         self.releases = self.data / "releases"
         self.releases.mkdir(exist_ok=True)
         self.state_path = self.data / "state.json"
-        self.state = json.loads(self.state_path.read_text()) if self.state_path.exists() else {"current": None, "previous": None}
+        self.managed = os.environ.get("MEDIA_STR_MANAGED") == "1"
+        self.runtime_path = self.data / "runtime.json"
+        self.runtime_job = self.data / "runtime-job.json"
+        if self.managed:
+            runtime = self.runtime_state()
+            current = os.environ.get("MEDIA_STR_RUNTIME_RELEASE") or None
+            previous = runtime.get("previous") if runtime.get("current") == current else runtime.get("current")
+            self.state = {"current": current, "previous": previous}
+        else:
+            self.state = json.loads(self.state_path.read_text()) if self.state_path.exists() else {"current": None, "previous": None}
         self.lock = threading.Lock()
         self.process = None
         self.port = None
         self.nonce = None
         self.timeout = startup_timeout
-        self.job = {"status": "idle", "message": "Готово"}
+        self._job = {"status": "idle", "message": "Готово"}
         self.repository_update = {"status": "unchecked", "message": "Проверка ещё не выполнялась"}
         self.log = logging.getLogger("media-str-" + str(self.data))
         self.log.setLevel(logging.INFO)
@@ -146,6 +167,33 @@ class Manager:
         handler = RotatingFileHandler(self.data / "service.log", maxBytes=512 * 1024, backupCount=2, encoding="utf-8")
         handler.setFormatter(SafeFormatter("%(asctime)s %(levelname)s %(message)s"))
         self.log.addHandler(handler)
+
+    def runtime_state(self):
+        return json.loads(self.runtime_path.read_text()) if self.runtime_path.exists() else {}
+
+    @property
+    def job(self):
+        if self.managed and self.runtime_job.exists():
+            return json.loads(self.runtime_job.read_text())
+        return self._job
+
+    @job.setter
+    def job(self, value):
+        self._job = value
+        if self.managed:
+            atomic_json(self.runtime_job, value)
+
+    def switching(self):
+        state = self.runtime_state() if self.managed else {}
+        return bool(state.get("pending") or state.get("trial"))
+
+    def schedule(self, candidate):
+        state = self.runtime_state()
+        if state.get("pending") or state.get("trial"):
+            raise ValueError("Дождитесь завершения обновления")
+        self.job = {"status": "running", "message": "Перезапускаем приложение и сервис обслуживания…"}
+        state["pending"] = candidate
+        atomic_json(self.runtime_path, state)
 
     def release_path(self, name):
         if not isinstance(name, str) or not re.fullmatch(r"[a-zA-Z0-9.-]+", name) or name in (".", ".."):
@@ -171,13 +219,19 @@ class Manager:
         process, self.process = self.process, None
         if process:
             try:
-                os.killpg(process.pid, signal.SIGTERM)
+                if self.managed:
+                    process.terminate()
+                else:
+                    os.killpg(process.pid, signal.SIGTERM)
             except ProcessLookupError:
                 pass
             try:
                 process.wait(timeout=3)
             except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
+                if self.managed:
+                    process.kill()
+                else:
+                    os.killpg(process.pid, signal.SIGKILL)
                 process.wait(timeout=3)
 
     def start(self, release):
@@ -194,7 +248,7 @@ class Manager:
                        "MEDIA_STR_APP_PORT": str(self.port), "MEDIA_STR_HEALTH_NONCE": self.nonce,
                        "MEDIA_STR_APP_DATA": str(app_data)}
         self.process = subprocess.Popen([sys.executable, str(root / "app.py")], cwd=str(root), env=environment,
-                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
+                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=not self.managed)
         process = self.process
 
         def capture():
@@ -218,6 +272,9 @@ class Manager:
     def boot(self):
         current = self.state.get("current")
         if not current:
+            return
+        if self.managed:
+            self.start(current)
             return
         try:
             self.start(current)
@@ -264,11 +321,18 @@ class Manager:
         with tempfile.TemporaryDirectory(prefix="stage-", dir=self.data) as temp:
             stage = Path(temp)
             manifest = unpack(package, stage)
+            if self.managed and manifest["protocol"] != 2:
+                raise ValueError("Нужен полный пакет приложения и сервиса обслуживания")
+            if not self.managed and manifest["protocol"] == 2:
+                raise ValueError("Один раз запустите новый установщик по SSH для включения полных обновлений")
             candidate = manifest["version"] + "-" + secrets.token_hex(6)
             os.replace(stage, self.release_path(candidate))
             sync_directory(self.releases)
             try:
-                self.activate(candidate)
+                if self.managed:
+                    self.schedule(candidate)
+                else:
+                    self.activate(candidate)
             except Exception:
                 shutil.rmtree(self.release_path(candidate), ignore_errors=True)
                 raise
@@ -277,7 +341,10 @@ class Manager:
         previous = self.state.get("previous")
         if not previous:
             raise ValueError("Предыдущая версия отсутствует")
-        self.activate(previous)
+        if self.managed:
+            self.schedule(previous)
+        else:
+            self.activate(previous)
 
     def perform(self, action, package=None, revision=None):
         try:
@@ -302,7 +369,8 @@ class Manager:
                 self.install(package)
             else:
                 self.rollback()
-            self.job = {"status": "success", "message": "Версия запущена и проверена"}
+            if not self.managed:
+                self.job = {"status": "success", "message": "Версия запущена и проверена"}
         except Exception as error:
             self.job = {"status": "error", "message": redact(str(error))}
             if action == "repository-check":
@@ -326,18 +394,23 @@ class Manager:
         repository_update = dict(self.repository_update)
         if repository_update.get("status") == "checked":
             repository_update["available"] = manifest.get("source") != {"repository": repository.REPOSITORY, "commit": repository_update["commit"]}
-        return {"version": manifest.get("version"), "source": manifest.get("source"),
+        return {"version": manifest.get("version"), "release": self.state.get("current"), "source": manifest.get("source"),
                 "repository": repository_update, "maintenance_version": VERSION, "healthy": self.healthy(),
                 "previous": self.state.get("previous"), "job": self.job,
+                "full_updates": self.managed,
                 "python": ".".join(map(str, sys.version_info[:3])), "player_connected": False}
 
     def logs(self):
-        path = self.data / "service.log"
-        if not path.exists():
-            return ""
-        with path.open("rb") as file:
-            file.seek(max(0, path.stat().st_size - 128 * 1024))
-            return redact(file.read().decode("utf-8", errors="replace"))
+        names = ("launcher.log", "service.log") if self.managed else ("service.log",)
+        parts = []
+        for name in names:
+            path = self.data / name
+            if not path.exists():
+                continue
+            with path.open("rb") as file:
+                file.seek(max(0, path.stat().st_size - (128 * 1024 // len(names))))
+                parts.append(file.read().decode("utf-8", errors="replace"))
+        return redact("\n".join(parts))
 
 
 RECOVERY = b'''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Media Str recovery</title><body><h1>Media Str maintenance</h1><p>This page works independently of the music interface.</p><p><a href="/">Interface</a> | <a href="/api/status">Status</a> | <a href="/api/logs/download">Download logs</a></p><form action="/api/update" method="post" enctype="application/octet-stream"><input type="file" id="package" accept=".zip"><button type="button" id="upload">Update trusted package</button><button type="button" id="rollback">Rollback</button></form><p><button type="button" id="repo-check">Check GitHub</button><button type="button" id="repo-install" disabled>Install from GitHub</button></p><pre id="result"></pre><script src="/maintenance.js"></script></body></html>'''
@@ -406,6 +479,15 @@ class Handler(BaseHTTPRequestHandler):
             connection.close()
 
     def do_GET(self):
+        if urlsplit(self.path).path == "/runtime-health":
+            expected = os.environ.get("MEDIA_STR_RUNTIME_NONCE", "")
+            supplied = self.headers.get("X-MediaStr-Runtime", "")
+            if not expected or not hmac.compare_digest(expected.encode(), supplied.encode()):
+                self.respond(403, {"error": "Нет доступа"})
+                return
+            healthy = self.server.manager.healthy() or os.environ.get("MEDIA_STR_RECOVERY") == "1"
+            self.respond(200 if healthy else 503, {"nonce": expected, "healthy": healthy})
+            return
         if not self.authenticate():
             return
         manager = self.server.manager
@@ -454,6 +536,9 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(403, {"error": "Запрос отклонён"})
             return
         path = urlsplit(self.path).path
+        if self.server.manager.switching():
+            self.respond(409, {"error": "Идёт перезапуск обновления. Подождите…"})
+            return
         if path in ("/api/yandex/login", "/api/yandex/check", "/api/yandex/logout", "/api/music/action"):
             manager = self.server.manager
             if not manager.lock.acquire(blocking=False):
