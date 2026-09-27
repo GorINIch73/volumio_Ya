@@ -4,3 +4,4 @@ dist/*
 !dist/.gitkeep
 __pycache__/
 *.pyc
+node_modules/

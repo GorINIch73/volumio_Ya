@@ -25,6 +25,7 @@ class Music(unittest.TestCase):
         self.account = app.YandexAccount(self.tmp.name, validator=lambda token: {"uid": "42"})
         self.account.login("secret-token")
         self.music = app.Music(self.account)
+        self.music.volumio_host = "192.168.1.117"
 
     def test_likes_pagination_preserves_order_duplicates_and_unavailable(self):
         ids = [{"id": str(i)} for i in range(55)]
@@ -70,7 +71,7 @@ class Music(unittest.TestCase):
             result = self.music.action({"action": "play", "id": "7", "uri": "http://evil"})
         calls = request.call_args_list
         self.assertNotIn("token", calls[2].kwargs)
-        self.assertEqual(calls[3].args, ("127.0.0.1", "/api/v1/replaceAndPlay"))
+        self.assertEqual(calls[3].args, (self.music.volumio_host, "/api/v1/replaceAndPlay"))
         item = calls[3].kwargs["payload"]
         digest = hashlib.md5(b"XGRlBW9FXlekgbPrRHuSiAmusic/file.mp3salt").hexdigest()
         self.assertEqual(item["uri"], f"https://cdn.music.yandex.net/get-mp3/{digest}/65abcdef/music/file.mp3")
@@ -123,14 +124,18 @@ class Music(unittest.TestCase):
 
     def test_timeout_and_connection_refusal_have_distinct_safe_messages(self):
         for error, expected in ((TimeoutError("private-url"), "10 секунд"),
-                                (ConnectionRefusedError("private-url"), "127.0.0.1:80")):
+                                (ConnectionRefusedError("private-url"), "192.168.1.117:80")):
             with self.subTest(error=type(error).__name__), patch.object(app.http.client, "HTTPConnection") as connection:
                 connection.return_value.request.side_effect = error
                 with self.assertRaises(app.AccountError) as caught:
                     self.music.volumio("replaceAndPlay", {"uri": "private-url"})
                 self.assertIn(expected, str(caught.exception))
                 self.assertNotIn("private-url", str(caught.exception))
-                self.assertEqual(connection.return_value.request.call_count, 1)
+                self.assertEqual(connection.return_value.request.call_count,
+                                 2 if isinstance(error, ConnectionRefusedError) else 1)
+                if isinstance(error, ConnectionRefusedError):
+                    self.assertEqual([call.args[0] for call in connection.call_args_list],
+                                     [self.music.volumio_host, "127.0.0.1"])
 
 
 class MusicHTTP(test_yandex_account.AccountHTTP):

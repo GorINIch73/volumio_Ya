@@ -1,0 +1,21 @@
+{
+  "page": {"label": "Яндекс Музыка · Media Str"},
+  "sections": [{
+    "id": "account",
+    "element": "section",
+    "label": "Аккаунт Яндекс Музыки",
+    "icon": "fa-user",
+    "onSave": {"type": "controller", "endpoint": "music_service/media_str", "method": "saveAccount"},
+    "saveButton": {"label": "Войти по токену", "data": ["token"]},
+    "content": [{
+      "id": "token", "element": "input", "type": "password", "label": "Токен",
+      "value": "", "doc": "Введите OAuth-токен без префикса OAuth. Сохранённый токен не отображается."
+    }, {
+      "id": "check", "element": "button", "label": "Проверить аккаунт",
+      "onClick": {"type": "controller", "endpoint": "music_service/media_str", "method": "checkAccount"}
+    }, {
+      "id": "logout", "element": "button", "label": "Выйти из аккаунта",
+      "onClick": {"type": "controller", "endpoint": "music_service/media_str", "method": "logoutAccount"}
+    }]
+  }]
+}

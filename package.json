@@ -1,0 +1,23 @@
+{
+  "name": "media_str",
+  "version": "0.4.0",
+  "description": "Yandex Music library and playback for Volumio",
+  "main": "index.js",
+  "author": "GorINIch73",
+  "license": "UNLICENSED",
+  "private": true,
+  "repository": "https://github.com/GorINIch73/volumio_Ya",
+  "scripts": {"test": "node --test tests/test_plugin.js"},
+  "engines": {"node": ">=14", "volumio": ">=4"},
+  "volumio_info": {
+    "prettyName": "Яндекс Музыка · Media Str",
+    "icon": "fa-music",
+    "plugin_type": "music_service",
+    "boot_priority": 10,
+    "architectures": ["armhf", "arm64", "amd64"],
+    "os": ["bookworm"],
+    "details": "Личная библиотека Яндекс Музыки в интерфейсе Volumio",
+    "changelog": "Переход на штатный музыкальный плагин Volumio"
+  },
+  "dependencies": {"kew": "0.7.0"}
+}
