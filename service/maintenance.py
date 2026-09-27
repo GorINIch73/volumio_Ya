@@ -29,7 +29,7 @@ import repository
 MAX_PACKAGE = 16 * 1024 * 1024
 MAX_EXPANDED = 32 * 1024 * 1024
 MAX_FILES = 256
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 
 def redact(value):
@@ -390,12 +390,12 @@ class Handler(BaseHTTPRequestHandler):
         if not process or process.poll() is not None:
             self.respond(503, {"error": "Приложение недоступно. Дождитесь завершения обновления"})
             return
-        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=15)
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=45)
         try:
             connection.request(method, path, body=body, headers={"X-MediaStr-Bridge": nonce, "Content-Type": "application/json"})
             response = connection.getresponse()
-            data = response.read(65537)
-            if len(data) > 65536:
+            data = response.read(1024 * 1024 + 1)
+            if len(data) > 1024 * 1024:
                 raise ValueError("Ответ слишком большой")
             # Do not forward HTML/internal tracebacks or log account request/response bodies.
             value = json.loads(data)
@@ -412,8 +412,8 @@ class Handler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         if path == "/api/status":
             self.respond(200, manager.status())
-        elif path == "/api/yandex/status":
-            self.proxy_account("GET", path)
+        elif path in ("/api/yandex/status", "/api/music/library", "/api/music/state"):
+            self.proxy_account("GET", self.path)
         elif path in ("/api/logs", "/api/logs/download"):
             data = manager.logs()
             if path.endswith("download"):
@@ -454,7 +454,7 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(403, {"error": "Запрос отклонён"})
             return
         path = urlsplit(self.path).path
-        if path in ("/api/yandex/login", "/api/yandex/check", "/api/yandex/logout"):
+        if path in ("/api/yandex/login", "/api/yandex/check", "/api/yandex/logout", "/api/music/action"):
             manager = self.server.manager
             if not manager.lock.acquire(blocking=False):
                 self.respond(409, {"error": "Дождитесь завершения обновления или другой операции"})

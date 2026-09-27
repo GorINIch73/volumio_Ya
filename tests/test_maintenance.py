@@ -46,7 +46,7 @@ class Packages(unittest.TestCase):
         target = self.root / "output"
         target.mkdir()
         manifest = unpack(self.package, target)
-        self.assertEqual(manifest["version"], "0.1.0")
+        self.assertEqual(manifest["version"], "0.2.0")
         self.assertTrue((target / "web/index.html").is_file())
 
     def test_traversal_and_absolute_paths(self):
@@ -133,7 +133,7 @@ class Lifecycle(unittest.TestCase):
         self.manager.rollback()
         self.assertTrue(self.manager.healthy())
         self.assertEqual(self.manager.state["current"], old)
-        self.assertEqual(self.manager.status()["version"], "0.1.0")
+        self.assertEqual(self.manager.status()["version"], "0.2.0")
 
     def test_failed_start_restores_previous_process_and_state(self):
         old = dict(self.manager.state)
@@ -157,7 +157,7 @@ class Lifecycle(unittest.TestCase):
         self.manager.stop()
         self.manager.boot()
         self.assertTrue(self.manager.healthy())
-        self.assertEqual(self.manager.status()["version"], "0.1.0")
+        self.assertEqual(self.manager.status()["version"], "0.2.0")
 
     def test_boot_rolls_back_broken_current(self):
         self.next_version()
@@ -166,7 +166,7 @@ class Lifecycle(unittest.TestCase):
         (self.manager.release_path(self.manager.state["current"]) / "app.py").write_text("raise RuntimeError('bad boot')")
         self.manager.boot()
         self.assertTrue(self.manager.healthy())
-        self.assertEqual(self.manager.status()["version"], "0.1.0")
+        self.assertEqual(self.manager.status()["version"], "0.2.0")
 
 
 class HTTP(unittest.TestCase):
@@ -241,7 +241,7 @@ class HTTP(unittest.TestCase):
         self.assertEqual(self.manager.job["status"], "success")
         status, data, headers = self.request("GET", "/")
         self.assertEqual(status, 200)
-        self.assertIn("На вашей волне".encode(), data)
+        self.assertIn("Моя музыка".encode(), data)
         self.assertIn("Content-Security-Policy", headers)
         self.assertEqual(self.request("GET", "/../../credentials.json")[0], 404)
         self.manager.stop()
@@ -303,6 +303,22 @@ class HTTP(unittest.TestCase):
         self.assertEqual(self.request("POST", "/api/yandex/logout", headers={"X-MediaStr-Request": "1"})[0], 200)
         self.assertFalse(path.exists())
         self.assertNotIn("private-token", self.manager.logs())
+
+    def test_music_bridge_auth_and_validation(self):
+        package = build(ROOT / "app", self.root / "release.zip")
+        self.manager.install(package)
+        for path in ("/api/music/library?kind=likes&offset=50", "/api/music/state"):
+            self.assertEqual(self.request("GET", path, auth=False)[0], 401)
+        self.assertEqual(self.request("POST", "/api/music/action", b'{}')[0], 403)
+        # This reaches the application through the authenticated bridge, without
+        # making a network call: no Yandex account has been configured.
+        code, body, _ = self.request("GET", "/api/music/library?kind=likes&offset=50")
+        self.assertEqual(code, 400)
+        self.assertIn("войдите", json.loads(body)["error"])
+        code, body, _ = self.request("POST", "/api/music/action", b'{"action":"invalid"}',
+                                     {"X-MediaStr-Request": "1"})
+        self.assertEqual(code, 400)
+        self.assertIn("команда", json.loads(body)["error"])
 
 
 class Secrets(unittest.TestCase):

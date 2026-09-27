@@ -7,6 +7,12 @@ let requestPending = false;
 let activeTab = 'home';
 let account = null;
 let accountPending = false;
+let musicPending = false;
+let libraryGeneration = 0;
+let tracksGeneration = 0;
+let collectionKind = null;
+let nextOffset = null;
+let playerConnected = false;
 
 function selectTab(name) {
   activeTab = ['home', 'account', 'maintenance', 'logs'].includes(name) ? name : 'home';
@@ -165,6 +171,14 @@ async function accountAction(action, token) {
   try {
     const value = await api(`/api/yandex/${action}`, {method: 'POST', headers: {'X-MediaStr-Request': '1', 'Content-Type': 'application/json'}, body: token === undefined ? undefined : JSON.stringify({token})});
     renderAccount(value);
+    libraryGeneration++;
+    tracksGeneration++;
+    collectionKind = null;
+    nextOffset = null;
+    $('#tracks').replaceChildren();
+    $('#tracks-more').hidden = true;
+    $('#collection-title').textContent = 'Выберите плейлист';
+    loadLibrary();
     $('#yandex-token').value = '';
     $('#account-message').textContent = action === 'logout' ? 'Аккаунт отключён, токен удалён с устройства' : 'Аккаунт проверен, токен сохранён на устройстве';
     $('#account-message').className = 'notice success';
@@ -212,8 +226,132 @@ $('#copy').addEventListener('click', async () => {
 async function poll() {
   await pollStatus();
   await pollLogs();
+  await pollPlayer();
   if (activeTab === 'account') await pollAccount();
   setTimeout(poll, 2500);
 }
+
+function musicMessage(message, error = false) {
+  $('#music-message').textContent = message;
+  $('#music-message').className = error ? 'notice error' : 'notice';
+}
+
+function musicButtons() {
+  document.querySelectorAll('[data-command]').forEach(button => {
+    button.disabled = musicPending || !playerConnected;
+  });
+  document.querySelectorAll('[data-track-action]').forEach(button => {
+    button.disabled = musicPending || button.dataset.unavailable === 'true';
+  });
+}
+
+async function loadLibrary() {
+  const generation = ++libraryGeneration;
+  $('#library-refresh').disabled = true;
+  $('#playlists').replaceChildren();
+  musicMessage('Загружаем плейлисты…');
+  try {
+    const value = await api('/api/music/library');
+    if (generation !== libraryGeneration) return;
+    for (const playlist of value.playlists) {
+      const button = document.createElement('button');
+      button.className = 'card playlist-card';
+      button.textContent = `${playlist.title} · ${playlist.count} треков`;
+      button.addEventListener('click', () => loadTracks(playlist.kind));
+      $('#playlists').append(button);
+    }
+    musicMessage(value.playlists.length ? 'Выберите плейлист или «Мне нравится».' : 'Своих плейлистов пока нет. Откройте «Мне нравится».');
+  } catch (error) {
+    if (generation === libraryGeneration) musicMessage(error.message, true);
+  } finally {
+    $('#library-refresh').disabled = false;
+  }
+}
+
+async function loadTracks(kind, offset = 0) {
+  const generation = ++tracksGeneration;
+  collectionKind = kind;
+  $('#tracks-more').hidden = true;
+  if (!offset) $('#tracks').replaceChildren();
+  musicMessage('Загружаем треки…');
+  try {
+    const value = await api('/api/music/library?' + new URLSearchParams({kind, offset}));
+    if (generation !== tracksGeneration) return;
+    $('#collection-title').textContent = `${value.title} · ${value.total}`;
+    for (const track of value.tracks) {
+      const row = document.createElement('article');
+      row.className = 'music-row';
+      const text = document.createElement('div');
+      const title = document.createElement('strong');
+      title.textContent = track.title;
+      const detail = document.createElement('span');
+      detail.textContent = `${track.artist} · ${Math.floor(track.duration / 60)}:${String(track.duration % 60).padStart(2, '0')}${track.available ? '' : ' · Недоступен'}`;
+      text.append(title, detail);
+      row.append(text);
+      for (const [action, label] of [['play', '▶'], ['enqueue', 'В очередь']]) {
+        const button = document.createElement('button');
+        button.className = 'secondary';
+        button.textContent = label;
+        button.setAttribute('aria-label', `${action === 'play' ? 'Воспроизвести' : 'Добавить в очередь'}: ${track.title}`);
+        button.dataset.trackAction = action;
+        button.dataset.unavailable = String(!track.available);
+        button.addEventListener('click', () => musicAction(action, track.id));
+        row.append(button);
+      }
+      $('#tracks').append(row);
+    }
+    nextOffset = value.next_offset;
+    $('#tracks-more').hidden = nextOffset === null;
+    musicButtons();
+    musicMessage(value.total ? 'Выберите трек для воспроизведения.' : 'В этом плейлисте пока нет треков.');
+  } catch (error) {
+    if (generation === tracksGeneration) {
+      musicMessage(error.message, true);
+      if (offset) $('#tracks-more').hidden = false;
+    }
+  }
+}
+
+async function musicAction(action, id) {
+  if (musicPending) return;
+  musicPending = true;
+  musicButtons();
+  musicMessage('Отправляем команду плееру…');
+  try {
+    const value = await api('/api/music/action', {method: 'POST',
+      headers: {'X-MediaStr-Request': '1', 'Content-Type': 'application/json'},
+      body: JSON.stringify({action, id})});
+    musicMessage(value.message);
+    await pollPlayer();
+  } catch (error) {
+    musicMessage(error.message, true);
+  } finally {
+    musicPending = false;
+    musicButtons();
+  }
+}
+
+async function pollPlayer() {
+  try {
+    const state = await api('/api/music/state');
+    playerConnected = true;
+    $('#playing-title').textContent = state.title || 'Выберите трек';
+    $('#playing-artist').textContent = [state.artist, {play: 'Играет', pause: 'Пауза', stop: 'Остановлено'}[state.status]].filter(Boolean).join(' · ');
+    $('#player-toggle').textContent = state.status === 'play' ? 'Ⅱ' : '▶';
+  } catch (error) {
+    playerConnected = false;
+    $('#playing-title').textContent = 'Плеер недоступен';
+    $('#playing-artist').textContent = error.message;
+  }
+  musicButtons();
+}
+
+$('#library-refresh').addEventListener('click', loadLibrary);
+$('#library-likes').addEventListener('click', () => loadTracks('likes'));
+$('#tracks-more').addEventListener('click', () => loadTracks(collectionKind, nextOffset));
+document.querySelectorAll('[data-command]').forEach(button => {
+  button.addEventListener('click', () => musicAction(button.dataset.command));
+});
 route();
+loadLibrary();
 poll();
