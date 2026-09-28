@@ -1,21 +1,148 @@
 {
-  "page": {"label": "Яндекс Музыка · Media Str"},
-  "sections": [{
-    "id": "account",
-    "element": "section",
-    "label": "Аккаунт Яндекс Музыки",
-    "icon": "fa-user",
-    "onSave": {"type": "controller", "endpoint": "music_service/media_str", "method": "saveAccount"},
-    "saveButton": {"label": "Войти по токену", "data": ["token"]},
-    "content": [{
-      "id": "token", "element": "input", "type": "password", "label": "Токен",
-      "value": "", "doc": "Введите OAuth-токен без префикса OAuth. Сохранённый токен не отображается."
-    }, {
-      "id": "check", "element": "button", "label": "Проверить аккаунт",
-      "onClick": {"type": "controller", "endpoint": "music_service/media_str", "method": "checkAccount"}
-    }, {
-      "id": "logout", "element": "button", "label": "Выйти из аккаунта",
-      "onClick": {"type": "controller", "endpoint": "music_service/media_str", "method": "logoutAccount"}
-    }]
-  }]
+  "page": {
+    "label": "YaM"
+  },
+  "sections": [
+    {
+      "id": "account",
+      "element": "section",
+      "label": "Аккаунт Яндекс Музыки",
+      "icon": "fa-user",
+      "onSave": {
+        "type": "controller",
+        "endpoint": "music_service/yam",
+        "method": "saveAccount"
+      },
+      "saveButton": {
+        "label": "Войти по токену",
+        "data": [
+          "token"
+        ]
+      },
+      "content": [
+        {
+          "id": "token",
+          "element": "input",
+          "type": "password",
+          "label": "Токен",
+          "value": "",
+          "doc": "Введите OAuth-токен без префикса OAuth. Сохранённый токен не отображается."
+        },
+        {
+          "id": "check",
+          "element": "button",
+          "label": "Проверить аккаунт",
+          "onClick": {
+            "type": "controller",
+            "endpoint": "music_service/yam",
+            "method": "checkAccount"
+          }
+        },
+        {
+          "id": "logout",
+          "element": "button",
+          "label": "Выйти из аккаунта",
+          "onClick": {
+            "type": "controller",
+            "endpoint": "music_service/yam",
+            "method": "logoutAccount"
+          }
+        }
+      ]
+    },
+    {
+      "id": "diagnostics",
+      "element": "section",
+      "label": "Журнал и ошибки",
+      "icon": "fa-list",
+      "description": "Ошибки сохраняются после исчезновения уведомления и перезапуска. Для копирования выделите текст в поле последней ошибки.",
+      "content": [
+        {
+          "id": "last_error",
+          "element": "input",
+          "type": "text",
+          "label": "Последняя ошибка",
+          "value": "",
+          "attributes": [
+            {
+              "readonly": "readonly"
+            }
+          ]
+        },
+        {
+          "id": "refresh_log",
+          "element": "button",
+          "label": "Обновить",
+          "onClick": {
+            "type": "controller",
+            "endpoint": "music_service/yam",
+            "method": "refreshDiagnostics"
+          }
+        },
+        {
+          "id": "show_log",
+          "element": "button",
+          "label": "Открыть журнал",
+          "onClick": {
+            "type": "controller",
+            "endpoint": "music_service/yam",
+            "method": "showJournal"
+          }
+        }
+      ]
+    },
+    {
+      "id": "updates",
+      "element": "section",
+      "label": "Обновление из GitHub",
+      "icon": "fa-refresh",
+      "description": "Источник: GorINIch73/volumio_Ya. Проверка готовит пакет. Установка остановит музыку и перезапустит Volumio. Аккаунт сохраняется.",
+      "content": [
+        {
+          "id": "installed_version",
+          "element": "input",
+          "type": "text",
+          "label": "Установленная версия",
+          "value": "",
+          "attributes": [
+            {
+              "readonly": "readonly"
+            }
+          ]
+        },
+        {
+          "id": "update_status",
+          "element": "input",
+          "type": "text",
+          "label": "Состояние обновления",
+          "value": "",
+          "attributes": [
+            {
+              "readonly": "readonly"
+            }
+          ]
+        },
+        {
+          "id": "check_update",
+          "element": "button",
+          "label": "Проверить обновление",
+          "onClick": {
+            "type": "controller",
+            "endpoint": "music_service/yam",
+            "method": "checkRepository"
+          }
+        },
+        {
+          "id": "install_update",
+          "element": "button",
+          "label": "Установить обновление",
+          "onClick": {
+            "type": "controller",
+            "endpoint": "music_service/yam",
+            "method": "installRepository"
+          }
+        }
+      ]
+    }
+  ]
 }

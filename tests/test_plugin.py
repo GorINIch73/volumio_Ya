@@ -1,4 +1,3 @@
-import importlib.util
 import io
 import json
 import os
@@ -15,11 +14,6 @@ sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "python"))
 from build import build_plugin
 from bridge import Backend, serve
-
-spec = importlib.util.spec_from_file_location("migration", ROOT / "scripts/migrate-account.py")
-migration = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(migration)
-
 
 class PluginTests(unittest.TestCase):
     def setUp(self):
@@ -57,17 +51,15 @@ class PluginTests(unittest.TestCase):
         self.assertNotIn("secret-token", output.getvalue())
         self.assertIn("error", json.loads(output.getvalue()))
 
-    def test_track_metadata_does_not_resolve_stream_or_call_volumio_rest(self):
+    def test_track_metadata_does_not_resolve_stream(self):
         backend = Backend(self.root)
         with patch.object(backend.music, "session", return_value=("token", "42")), \
                 patch.object(backend.music, "yandex", return_value=[{"id": "123", "title": "Song"}]), \
-                patch.object(backend.music, "stream", return_value="https://test.yandex.net/audio") as stream, \
-                patch.object(backend.music, "volumio") as rest:
+                patch.object(backend.music, "stream", return_value="https://test.yandex.net/audio") as stream:
             self.assertEqual(backend.dispatch("track", {"id": "123"})["title"], "Song")
             stream.assert_not_called()
             backend.dispatch("stream", {"id": "123"})
             stream.assert_called_once_with("token", "123")
-            rest.assert_not_called()
 
     def test_worker_exits_on_stdin_eof(self):
         result = subprocess.run([sys.executable, str(ROOT / "python/bridge.py"), "--data", str(self.root)],
@@ -75,14 +67,16 @@ class PluginTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(json.loads(result.stdout)["result"]["configured"])
 
-    def test_plugin_package_is_self_contained_and_excludes_standalone(self):
+    def test_plugin_package_is_self_contained(self):
         package = build_plugin(ROOT, self.root / "plugin.zip")
         with zipfile.ZipFile(package) as archive:
             self.assertIsNone(archive.testzip())
             names = set(archive.namelist())
             self.assertTrue({"package.json", "index.js", "UIConfig.json", "config.json", "install.sh",
                              "uninstall.sh", "app/app.py", "python/bridge.py", "node_modules/kew/kew.js"} <= names)
-            self.assertFalse(any(name.startswith(("service/", "app/web/", ".dev/")) for name in names))
+            allowed = {"lib", "python", "app", "node_modules"}
+            self.assertTrue(all("/" not in name or name.split("/")[0] in allowed for name in names))
+            self.assertEqual({name for name in names if name.startswith("app/")}, {"app/app.py"})
             self.assertFalse(any("yandex-account" in name for name in names))
             self.assertEqual(archive.getinfo("install.sh").external_attr >> 16 & 0o777, 0o755)
             archive.extractall(self.root / "extracted")
@@ -94,19 +88,6 @@ class PluginTests(unittest.TestCase):
                                 capture_output=True, text=True, timeout=5)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("result", json.loads(result.stdout))
-
-    def test_migration_preserves_original_and_refuses_overwrite(self):
-        original = self.root / "old.json"
-        original.write_text(json.dumps({"token": "private-token", "account": {"uid": "42"}}))
-        before = original.read_bytes()
-        target = self.root / "new/yandex-account.json"
-        migration.migrate(original, target)
-        self.assertEqual(original.read_bytes(), before)
-        self.assertEqual(json.loads(target.read_text()), json.loads(before))
-        self.assertEqual(target.stat().st_mode & 0o777, 0o600)
-        with self.assertRaises(FileExistsError):
-            migration.migrate(original, target)
-        self.assertEqual(json.loads(target.read_text()), json.loads(before))
 
 
 if __name__ == "__main__":

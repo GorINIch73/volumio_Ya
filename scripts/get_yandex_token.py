@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Optional local helper; never used by the maintenance service."""
+"""Local OAuth token helper for the Volumio plugin."""
 import os
 from pathlib import Path
 import sys
@@ -21,7 +21,7 @@ def main():
 
     # This helper intentionally performs no music/playlist modifications.
     token = client.device_auth(on_code=on_code)
-    folder = Path.home() / ".config" / "media-str"
+    folder = Path.home() / ".config" / "yam"
     folder.mkdir(parents=True, exist_ok=True, mode=0o700)
     path = folder / "yandex-access-token.txt"
     try:

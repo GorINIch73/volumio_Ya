@@ -4,10 +4,12 @@ const fs = require('fs');
 const path = require('path');
 const libQ = require('kew');
 const Backend = require('./lib/backend');
-const SERVICE = 'media_str';
-const NAME = 'Яндекс Музыка · Media Str';
+const {Journal, redact} = require('./lib/journal');
+const Updater = require('./lib/updater');
+const SERVICE = 'yam';
+const NAME = 'YaM';
 
-function ControllerMediaStr(context) {
+function ControllerYaM(context) {
   this.context = context;
   this.commandRouter = context.coreCommand;
   this.logger = context.logger;
@@ -16,16 +18,24 @@ function ControllerMediaStr(context) {
   this.lifecycle = 0;
   this.generation = 0;
   this.playback = Promise.resolve();
+  this.journal = null;
+  this.updater = null;
 }
 
-ControllerMediaStr.prototype.getConfigurationFiles = function () { return ['config.json']; };
+ControllerYaM.prototype.getConfigurationFiles = function () { return ['config.json']; };
 
-ControllerMediaStr.prototype.onVolumioStart = async function () {
+ControllerYaM.prototype.onVolumioStart = async function () {
   const config = this.commandRouter.pluginManager.getConfigurationFile(this.context, 'config.json');
   this.data = path.dirname(config);
+  if (!this.journal) this.journal = new Journal(this.data);
+  if (!this.updater) this.updater = new Updater(this.data, this.commandRouter.pluginManager, this.journal);
 };
 
-ControllerMediaStr.prototype.onStart = async function () {
+ControllerYaM.prototype.note = function (level, operation, message) {
+  return this.journal ? this.journal.write(level, operation, message) : redact(message);
+};
+
+ControllerYaM.prototype.onStart = async function () {
   if (this.started) return;
   if (this.starting) return this.starting;
   const epoch = ++this.lifecycle;
@@ -33,17 +43,18 @@ ControllerMediaStr.prototype.onStart = async function () {
   try { await this.starting; } finally { this.starting = null; }
 };
 
-ControllerMediaStr.prototype.startBackend = async function (epoch) {
+ControllerYaM.prototype.startBackend = async function (epoch) {
   if (!this.data) await this.onVolumioStart();
   if (epoch !== this.lifecycle) throw new Error('Запуск плагина отменён');
   this.mpd = this.commandRouter.pluginManager.getPlugin('music_service', 'mpd');
   if (!this.mpd) throw new Error('Проигрыватель MPD недоступен');
-  const backend = new Backend(this.data, () => {
+  const backend = new Backend(this.data, reason => {
     if (this.backend !== backend) return;
     this.started = false;
     this.generation++;
     this.removeFromBrowseSources();
-    this.logger.error('Media Str: компонент Яндекс Музыки остановлен');
+    this.note('ERROR', 'backend', reason || 'Компонент Яндекс Музыки остановлен');
+    this.logger.error('YaM: компонент Яндекс Музыки остановлен');
   });
   this.backend = backend;
   try {
@@ -51,6 +62,7 @@ ControllerMediaStr.prototype.startBackend = async function (epoch) {
     if (epoch !== this.lifecycle) throw new Error('Запуск плагина отменён');
     this.started = true;
     this.addToBrowseSources();
+    this.note('INFO', 'start', 'Плагин запущен');
   } catch (error) {
     this.started = false;
     await backend.stop();
@@ -59,17 +71,18 @@ ControllerMediaStr.prototype.startBackend = async function (epoch) {
   }
 };
 
-ControllerMediaStr.prototype.addToBrowseSources = function () {
+ControllerYaM.prototype.addToBrowseSources = function () {
   this.commandRouter.volumioAddToBrowseSources({
     name: NAME, uri: SERVICE, plugin_type: 'music_service', plugin_name: SERVICE, icon: 'fa fa-music'
   });
 };
 
-ControllerMediaStr.prototype.removeFromBrowseSources = function () {
+ControllerYaM.prototype.removeFromBrowseSources = function () {
   this.commandRouter.volumioRemoveToBrowseSources(NAME);
 };
 
-ControllerMediaStr.prototype.onStop = async function () {
+ControllerYaM.prototype.onStop = async function () {
+  if (this.updater) this.updater.stop();
   this.lifecycle++;
   this.started = false;
   this.generation++;
@@ -80,9 +93,10 @@ ControllerMediaStr.prototype.onStop = async function () {
   if (this.starting) await Promise.resolve(this.starting).catch(() => {});
   await this.playback.catch(() => {});
   if (this.ownsPlayback()) await this.commandRouter.volumioStop();
+  this.note('INFO', 'stop', 'Плагин остановлен');
 };
 
-ControllerMediaStr.prototype.ownsPlayback = function () {
+ControllerYaM.prototype.ownsPlayback = function () {
   const state = this.commandRouter.volumioGetState();
   if (!state) return false;
   if (state.service === SERVICE) return true;
@@ -93,14 +107,19 @@ ControllerMediaStr.prototype.ownsPlayback = function () {
   return Boolean(track && track.service === SERVICE);
 };
 
-ControllerMediaStr.prototype.onRestart = async function () {
+ControllerYaM.prototype.onRestart = async function () {
   await this.onStop();
   await this.onStart();
 };
 
-ControllerMediaStr.prototype.request = function (method, params) {
+ControllerYaM.prototype.request = function (method, params) {
   if (!this.started || !this.backend) return Promise.reject(new Error('Включите плагин Яндекс Музыки'));
-  return this.backend.request(method, params);
+  return this.backend.request(method, params).catch(error => {
+    error.message = this.note('ERROR', 'yandex.' + method,
+      error.message + (error.diagnostic ? ' (' + error.diagnostic + ')' : ''));
+    error.logged = true;
+    throw error;
+  });
 };
 
 function navigation(title, items, previous) {
@@ -122,12 +141,12 @@ function trackItem(track, type) {
 
 function identifier(data) {
   const uri = typeof data === 'string' ? data : data && data.uri;
-  const match = typeof uri === 'string' && /^media_str\/track\/([0-9]{1,24}(?::[0-9]{1,24})?)$/.exec(uri);
+  const match = typeof uri === 'string' && /^yam\/track\/([0-9]{1,24}(?::[0-9]{1,24})?)$/.exec(uri);
   if (!match) throw new Error('Некорректный адрес трека');
   return match[1];
 }
 
-ControllerMediaStr.prototype.handleBrowseUri = async function (uri) {
+ControllerYaM.prototype.handleBrowseUri = async function (uri) {
   if (uri === SERVICE) {
     const status = await this.request('status');
     if (!status.configured) {
@@ -137,7 +156,7 @@ ControllerMediaStr.prototype.handleBrowseUri = async function (uri) {
     return navigation(NAME, [folder('Мне нравится', SERVICE + '/collection/likes', 'fa fa-heart')]
       .concat(result.playlists.map(item => folder(item.title, SERVICE + '/collection/' + item.kind))), '/');
   }
-  const match = /^media_str\/collection\/(likes|[0-9]{1,24})(?:\/([0-9]{1,6}))?$/.exec(uri);
+  const match = /^yam\/collection\/(likes|[0-9]{1,24})(?:\/([0-9]{1,6}))?$/.exec(uri);
   if (!match) throw new Error('Неизвестный раздел Яндекс Музыки');
   const offset = Number(match[2] || 0);
   const result = await this.request('library', {kind: match[1], offset});
@@ -150,26 +169,36 @@ ControllerMediaStr.prototype.handleBrowseUri = async function (uri) {
   return navigation(result.title, items, previous);
 };
 
-ControllerMediaStr.prototype.explodeUri = async function (data) {
+ControllerYaM.prototype.explodeUri = async function (data) {
+  this.note('INFO', 'queue', 'Получение данных трека');
   const track = await this.request('track', {id: identifier(data)});
   return [trackItem(track, 'track')];
 };
 
-ControllerMediaStr.prototype.getTrackInfo = async function (data) {
+ControllerYaM.prototype.getTrackInfo = async function (data) {
   const track = await this.request('track', {id: identifier(data)});
   return [trackItem(track)];
 };
 
-ControllerMediaStr.prototype.search = async function () {
+ControllerYaM.prototype.search = async function () {
   return []; // Global search must not fail while this source has no search support.
 };
 
-ControllerMediaStr.prototype.clearAddPlayTrack = async function (track) {
+ControllerYaM.prototype.mpdCommand = async function (command) {
+  const result = await this.mpd.sendMpdCommand(command, []);
+  // Volumio can resolve an MPD error as an object after showing a short toast.
+  if (result && result.error) throw new Error(this.journal ? this.journal.sanitize(result.error) : redact(result.error));
+  return result;
+};
+
+ControllerYaM.prototype.clearAddPlayTrack = async function (track) {
   const generation = ++this.generation;
+  let stage = 'stream';
   const current = () => {
     if (!this.started || generation !== this.generation) throw new Error('Запуск трека отменён');
   };
   try {
+    this.note('INFO', 'play.stream', 'Получение ссылки на аудио');
     const stream = await this.request('stream', {id: identifier(track)});
     current();
     // Signed URLs never enter Volumio's persisted queue or plugin logs.
@@ -180,47 +209,58 @@ ControllerMediaStr.prototype.clearAddPlayTrack = async function (track) {
     this.playback = (async () => {
       await previous.catch(() => {});
       current();
-      await this.mpd.sendMpdCommand('stop', []);
+      stage = 'mpd.stop';
+      await this.mpdCommand('stop');
       current();
-      await this.mpd.sendMpdCommand('clear', []);
+      stage = 'mpd.clear';
+      await this.mpdCommand('clear');
       current();
-      await this.mpd.sendMpdCommand('add "' + stream.uri + '"', []);
+      stage = 'mpd.add';
+      await this.mpdCommand('add "' + stream.uri + '"');
       current();
+      stage = 'state';
       await this.commandRouter.stateMachine.setConsumeUpdateService('mpd', true);
       current();
-      await this.mpd.sendMpdCommand('play', []);
+      stage = 'mpd.play';
+      await this.mpdCommand('play');
     })();
     await this.playback;
+    this.note('INFO', 'play', 'Трек передан проигрывателю');
   } catch (error) {
     // MPD errors may echo signed URLs; never forward their raw messages.
-    const safe = new Error('Не удалось запустить трек. Проверьте аккаунт и подключение.');
-    if (generation === this.generation) this.commandRouter.pushToastMessage('error', NAME, safe.message);
+    const message = 'Не удалось запустить трек (' + stage + '): ' + error.message;
+    const safe = new Error(generation === this.generation
+      ? this.note('ERROR', 'play.' + stage, message) : 'Запуск трека отменён');
+    safe.logged = true;
+    if (generation === this.generation) this.commandRouter.pushToastMessage('error', NAME,
+      safe.message.slice(0, 180) + '. Подробности в журнале плагина.');
     throw safe;
   }
 };
 
-ControllerMediaStr.prototype.stop = async function () {
+ControllerYaM.prototype.stop = async function () {
   this.generation++;
   await this.playback.catch(() => {});
-  if (this.mpd) await this.mpd.sendMpdCommand('stop', []);
+  if (this.mpd) await this.mpdCommand('stop');
 };
-ControllerMediaStr.prototype.pause = async function () { await this.mpd.sendMpdCommand('pause 1', []); };
-ControllerMediaStr.prototype.resume = async function () {
+ControllerYaM.prototype.pause = async function () { await this.mpdCommand('pause 1'); };
+ControllerYaM.prototype.resume = async function () {
   await this.commandRouter.stateMachine.setConsumeUpdateService('mpd', true);
-  await this.mpd.sendMpdCommand('pause 0', []);
+  await this.mpdCommand('pause 0');
 };
-ControllerMediaStr.prototype.seek = async function (position) { return this.mpd.seek(position); };
-ControllerMediaStr.prototype.next = async function () {
+ControllerYaM.prototype.seek = async function (position) { return this.mpd.seek(position); };
+ControllerYaM.prototype.next = async function () {
   // Consume updates come from MPD, but track selection belongs to Volumio's queue.
   await this.commandRouter.stateMachine.setConsumeUpdateService(undefined);
   return this.commandRouter.stateMachine.next();
 };
-ControllerMediaStr.prototype.previous = async function () {
+ControllerYaM.prototype.previous = async function () {
   await this.commandRouter.stateMachine.setConsumeUpdateService(undefined);
   return this.commandRouter.stateMachine.previous();
 };
 
-ControllerMediaStr.prototype.getUIConfig = async function () {
+ControllerYaM.prototype.getUIConfig = async function () {
+  if (!this.data && typeof this.commandRouter.pluginManager.getConfigurationFile === 'function') await this.onVolumioStart();
   const ui = JSON.parse(fs.readFileSync(path.join(__dirname, 'UIConfig.json'), 'utf8'));
   if (this.started) {
     try {
@@ -230,19 +270,67 @@ ControllerMediaStr.prototype.getUIConfig = async function () {
       ui.sections[0].label = 'Не удалось прочитать аккаунт. Войдите заново.';
     }
   } else ui.sections[0].label = 'Сначала включите плагин';
+  const diagnostics = ui.sections.find(section => section.id === 'diagnostics');
+  diagnostics.content.find(item => item.id === 'last_error').value = this.journal ? this.journal.lastError() : 'Ошибок пока нет';
+  const updates = ui.sections.find(section => section.id === 'updates');
+  updates.content.find(item => item.id === 'update_status').value = this.updater ? this.updater.message : 'Включите плагин';
+  updates.content.find(item => item.id === 'installed_version').value = require('./package.json').version;
+  const install = updates.content.find(item => item.id === 'install_update');
+  install.onClick.data = {commit: this.updater && this.updater.ready ? this.updater.ready.commit : ''};
   return ui;
 };
 
-ControllerMediaStr.prototype.saveAccount = async function (data) {
+ControllerYaM.prototype.refreshDiagnostics = async function () {
+  const ui = await this.getUIConfig();
+  this.commandRouter.broadcastMessage('pushUiConfig', ui);
+  return ui;
+};
+
+ControllerYaM.prototype.showJournal = async function () {
+  if (!this.journal) await this.onVolumioStart();
+  const text = this.journal.text().replace(/[&<>"']/g, character =>
+    ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[character]);
+  this.commandRouter.broadcastMessage('openModal', {
+    title: 'Журнал YaM · последние 100 записей', size: 'lg',
+    message: '<p>Текст можно выделить и скопировать. Последняя ошибка также доступна отдельным полем в настройках.</p><pre>' + text + '</pre>',
+    buttons: [{name: 'Закрыть', class: 'btn btn-info'}]
+  });
+};
+
+ControllerYaM.prototype.checkRepository = async function () {
+  if (!this.updater) await this.onVolumioStart();
+  this.commandRouter.pushToastMessage('info', NAME, 'Проверяем репозиторий и готовим пакет…');
+  try { await this.updater.check(); } finally { await this.refreshDiagnostics(); }
+};
+
+ControllerYaM.prototype.installRepository = async function (data) {
+  if (!this.updater) throw new Error('Сначала проверьте обновление');
+  try {
+    await this.updater.install(data && data.commit);
+    this.commandRouter.pushToastMessage('success', NAME, 'Обновление установлено. Volumio перезапускается…');
+    // Reload all plugin modules through Volumio's normal service startup.
+    setTimeout(() => {
+      require('child_process').execFile('sudo', ['-n', 'systemctl', 'restart', 'volumio'], {timeout: 15000}, error => {
+        if (error) {
+          this.note('ERROR', 'update.restart', 'Не удалось перезапустить Volumio автоматически. Перезапустите устройство из меню Volumio.');
+          this.commandRouter.pushToastMessage('error', NAME, 'Обновление установлено. Перезапустите устройство из меню Volumio.');
+        }
+      });
+    }, 1500);
+  } finally { await this.refreshDiagnostics(); }
+};
+
+ControllerYaM.prototype.saveAccount = async function (data) {
+  if (this.journal) this.journal.protect(data && data.token);
   await this.request('login', {token: data && data.token});
   this.commandRouter.pushToastMessage('success', NAME, 'Аккаунт подключён. Откройте «Обзор».');
   return this.getUIConfig();
 };
-ControllerMediaStr.prototype.checkAccount = async function () {
+ControllerYaM.prototype.checkAccount = async function () {
   await this.request('check');
   this.commandRouter.pushToastMessage('success', NAME, 'Аккаунт доступен');
 };
-ControllerMediaStr.prototype.logoutAccount = async function () {
+ControllerYaM.prototype.logoutAccount = async function () {
   if (this.ownsPlayback()) await this.commandRouter.volumioStop();
   await this.request('logout');
   this.commandRouter.pushToastMessage('success', NAME, 'Вы вышли из аккаунта');
@@ -250,14 +338,18 @@ ControllerMediaStr.prototype.logoutAccount = async function () {
 };
 
 // Volumio calls .fail()/.fin() on plugin promises; expose its native Kew contract.
-Object.keys(ControllerMediaStr.prototype).forEach(name => {
-  const implementation = ControllerMediaStr.prototype[name];
+Object.keys(ControllerYaM.prototype).forEach(name => {
+  const implementation = ControllerYaM.prototype[name];
   if (implementation.constructor.name !== 'AsyncFunction') return;
-  ControllerMediaStr.prototype[name] = function () {
+  ControllerYaM.prototype[name] = function () {
     const deferred = libQ.defer();
-    implementation.apply(this, arguments).then(value => deferred.resolve(value), error => deferred.reject(error));
+    implementation.apply(this, arguments).then(value => deferred.resolve(value), error => {
+      const safe = new Error(error.logged ? error.message : this.note('ERROR', name, error.message));
+      safe.logged = true;
+      deferred.reject(safe);
+    });
     return deferred.promise;
   };
 });
 
-module.exports = ControllerMediaStr;
+module.exports = ControllerYaM;

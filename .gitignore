@@ -1,4 +1,3 @@
-.dev/
 .venv-token/
 dist/*
 !dist/.gitkeep

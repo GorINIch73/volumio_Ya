@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import traceback
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 from app import AccountError, Music, YandexAccount, music_id
@@ -53,9 +54,11 @@ def serve(backend, source, destination):
             response = {"id": request_id, "result": result}
         except AccountError as error:
             response = {"id": request_id, "error": str(error)}
-        except Exception:
+        except Exception as error:
             # Never serialize tracebacks, tokens or remote responses.
-            response = {"id": request_id, "error": "Не удалось выполнить запрос Яндекс Музыки"}
+            frame = traceback.extract_tb(error.__traceback__)[-1]
+            response = {"id": request_id, "error": "Не удалось выполнить запрос Яндекс Музыки",
+                        "diagnostic": type(error).__name__ + " at " + Path(frame.filename).name + ":" + str(frame.lineno)}
         destination.write(json.dumps(response, ensure_ascii=False) + "\n")
         destination.flush()
 

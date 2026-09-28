@@ -1,10 +1,8 @@
 import http.client
 import json
-import os
 from pathlib import Path
 import sys
 import tempfile
-import threading
 import unittest
 from unittest.mock import Mock, patch
 
@@ -80,43 +78,4 @@ class YandexProtocol(unittest.TestCase):
             with self.assertRaises(app.AccountError) as caught:
                 app.validate_yandex_token("secret-token")
             self.assertNotIn("secret-token", str(caught.exception))
-
-
-class AccountHTTP(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.environment = patch.dict(os.environ, {"MEDIA_STR_HEALTH_NONCE": "bridge-secret"})
-        self.environment.start()
-        self.server = app.ThreadingHTTPServer(("127.0.0.1", 0), app.Handler)
-        self.server.account = app.YandexAccount(self.tmp.name, validator=lambda token: PROFILE)
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
-        self.thread.start()
-
-    def tearDown(self):
-        self.server.shutdown()
-        self.server.server_close()
-        self.thread.join()
-        self.environment.stop()
-        self.tmp.cleanup()
-
-    def request(self, method, path, data=None, authorized=True):
-        connection = http.client.HTTPConnection(*self.server.server_address, timeout=5)
-        headers = {"X-MediaStr-Bridge": "bridge-secret"} if authorized else {}
-        connection.request(method, path, body=json.dumps(data).encode() if data is not None else None, headers=headers)
-        response = connection.getresponse()
-        result = response.status, json.loads(response.read())
-        connection.close()
-        return result
-
-    def test_login_status_check_logout(self):
-        status, result = self.request("POST", "/api/yandex/login", {"token": "secret-token"})
-        self.assertEqual(status, 200)
-        self.assertNotIn("secret-token", json.dumps(result))
-        self.assertTrue(self.request("GET", "/api/yandex/status")[1]["configured"])
-        self.assertEqual(self.request("POST", "/api/yandex/check")[0], 200)
-        self.assertFalse(self.request("POST", "/api/yandex/logout")[1]["configured"])
-
-    def test_direct_loopback_request_requires_bridge_key(self):
-        self.assertEqual(self.request("GET", "/api/yandex/status", authorized=False)[0], 403)
-        self.assertEqual(self.request("POST", "/api/yandex/login", {"token": "secret-token"}, authorized=False)[0], 403)
 

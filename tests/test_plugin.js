@@ -6,6 +6,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const Controller = require('../index');
+const {Journal} = require('../lib/journal');
+const Updater = require('../lib/updater');
 
 function fixture() {
   const calls = {sources: [], removed: [], mpd: [], toast: [], logs: []};
@@ -40,7 +42,7 @@ function fakeBackend(controller, request) {
 
 test('real worker: start, concurrent start, stop, restart; Kew contract', async () => {
   const {controller, calls, router} = fixture();
-  const data = fs.mkdtempSync(path.join(os.tmpdir(), 'media-str-plugin-'));
+  const data = fs.mkdtempSync(path.join(os.tmpdir(), 'yam-plugin-'));
   router.pluginManager.getConfigurationFile = () => path.join(data, 'config.json');
   try {
     const starting = controller.onStart();
@@ -48,11 +50,11 @@ test('real worker: start, concurrent start, stop, restart; Kew contract', async 
     await Promise.all([starting, controller.onStart()]);
     assert.equal(calls.sources.length, 1);
     const worker = controller.backend.process;
-    assert.equal((await controller.handleBrowseUri('media_str')).navigation.lists[0].items.length, 0);
+    assert.equal((await controller.handleBrowseUri('yam')).navigation.lists[0].items.length, 0);
     assert.equal((await controller.getUIConfig()).sections[0].content[0].value, '');
     await controller.onStop();
     assert.notEqual(worker.signalCode, null);
-    await assert.rejects(Promise.resolve(controller.handleBrowseUri('media_str')), /Включите/);
+    await assert.rejects(Promise.resolve(controller.handleBrowseUri('yam')), /Включите/);
     await controller.onStart();
     assert.notEqual(controller.backend.process.pid, worker.pid);
     await controller.onStop();
@@ -64,7 +66,7 @@ test('real worker: start, concurrent start, stop, restart; Kew contract', async 
 
 test('stop during startup does not leave a source or worker', async () => {
   const {controller, calls, router} = fixture();
-  const data = fs.mkdtempSync(path.join(os.tmpdir(), 'media-str-plugin-'));
+  const data = fs.mkdtempSync(path.join(os.tmpdir(), 'yam-plugin-'));
   router.pluginManager.getConfigurationFile = () => path.join(data, 'config.json');
   const start = Promise.resolve(controller.onStart()).catch(() => {});
   await controller.onStop();
@@ -77,7 +79,7 @@ test('stop during startup does not leave a source or worker', async () => {
 
 test('corrupt account permits startup and exposes a blank sign-in form', async () => {
   const {controller, router} = fixture();
-  const data = fs.mkdtempSync(path.join(os.tmpdir(), 'media-str-plugin-'));
+  const data = fs.mkdtempSync(path.join(os.tmpdir(), 'yam-plugin-'));
   fs.writeFileSync(path.join(data, 'yandex-account.json'), 'broken');
   router.pluginManager.getConfigurationFile = () => path.join(data, 'config.json');
   try {
@@ -95,7 +97,7 @@ test('corrupt account permits startup and exposes a blank sign-in form', async (
 
 test('crashed worker rejects requests and can be restarted', async () => {
   const {controller, calls, router} = fixture();
-  const data = fs.mkdtempSync(path.join(os.tmpdir(), 'media-str-plugin-'));
+  const data = fs.mkdtempSync(path.join(os.tmpdir(), 'yam-plugin-'));
   router.pluginManager.getConfigurationFile = () => path.join(data, 'config.json');
   try {
     await controller.onStart();
@@ -120,16 +122,16 @@ test('native Browse, pagination and unavailable tracks', async () => {
     assert.equal(params.offset, 50);
     return {title: 'Мне нравится', tracks: [track, {...track, id: '124', available: false}], next_offset: 100};
   });
-  const root = await controller.handleBrowseUri('media_str');
+  const root = await controller.handleBrowseUri('yam');
   assert.equal(root.navigation.prev.uri, '/');
-  assert.equal(root.navigation.lists[0].items[1].uri, 'media_str/collection/42');
-  const page = await controller.handleBrowseUri('media_str/collection/likes/50');
+  assert.equal(root.navigation.lists[0].items[1].uri, 'yam/collection/42');
+  const page = await controller.handleBrowseUri('yam/collection/likes/50');
   const items = page.navigation.lists[0].items;
   assert.equal(items[0].type, 'song');
   assert.equal(items[1].type, 'item-no-menu');
   assert.equal(items[1].uri, undefined);
-  assert.equal(items[2].uri, 'media_str/collection/likes/100');
-  assert.equal(page.navigation.prev.uri, 'media_str/collection/likes/0');
+  assert.equal(items[2].uri, 'yam/collection/likes/100');
+  assert.equal(page.navigation.prev.uri, 'yam/collection/likes/0');
   await assert.rejects(Promise.resolve(controller.handleBrowseUri('other/collection/likes')), /Неизвестный/);
 });
 
@@ -141,10 +143,10 @@ test('queue stores stable identifiers and resolves streams only at playback', as
     assert.equal(params.id, '123');
     return method === 'stream' ? {uri: stream} : track;
   });
-  const queued = await controller.explodeUri({uri: 'media_str/track/123'});
+  const queued = await controller.explodeUri({uri: 'yam/track/123'});
   assert.deepEqual(methods, ['track']);
-  assert.equal(queued[0].uri, 'media_str/track/123');
-  assert.equal(queued[0].service, 'media_str');
+  assert.equal(queued[0].uri, 'yam/track/123');
+  assert.equal(queued[0].service, 'yam');
   await controller.clearAddPlayTrack(queued[0]);
   await controller.clearAddPlayTrack(queued[0]);
   assert.deepEqual(methods, ['track', 'stream', 'stream']);
@@ -171,7 +173,7 @@ test('stop cancels a slow stream request before MPD receives it', async () => {
   const {controller, calls} = fixture();
   let resolve;
   fakeBackend(controller, () => new Promise(done => { resolve = done; }));
-  const playing = Promise.resolve(controller.clearAddPlayTrack({uri: 'media_str/track/123'}));
+  const playing = Promise.resolve(controller.clearAddPlayTrack({uri: 'yam/track/123'}));
   await controller.stop();
   resolve({uri: stream});
   await assert.rejects(playing);
@@ -184,8 +186,8 @@ test('switching tracks discards an older late response', async () => {
   let resolveOld;
   fakeBackend(controller, (method, params) => params.id === '123'
     ? new Promise(done => { resolveOld = done; }) : Promise.resolve({uri: stream}));
-  const old = Promise.resolve(controller.clearAddPlayTrack({uri: 'media_str/track/123'}));
-  await controller.clearAddPlayTrack({uri: 'media_str/track/124'});
+  const old = Promise.resolve(controller.clearAddPlayTrack({uri: 'yam/track/123'}));
+  await controller.clearAddPlayTrack({uri: 'yam/track/124'});
   resolveOld({uri: stream});
   await assert.rejects(old);
   assert.equal(calls.mpd.filter(command => command === 'play').length, 1);
@@ -195,8 +197,20 @@ test('MPD failure does not disclose signed URLs', async () => {
   const {controller, calls} = fixture();
   fakeBackend(controller, async () => ({uri: stream}));
   controller.mpd.sendMpdCommand = async () => { throw new Error('Failed ' + stream); };
-  await assert.rejects(Promise.resolve(controller.clearAddPlayTrack({uri: 'media_str/track/123'})), /Не удалось/);
+  await assert.rejects(Promise.resolve(controller.clearAddPlayTrack({uri: 'yam/track/123'})), /Не удалось/);
   assert.equal(JSON.stringify(calls).includes(stream), false);
+});
+
+test('resolved MPD error objects fail playback instead of reporting success', async () => {
+  const {controller, calls} = fixture();
+  fakeBackend(controller, async () => ({uri: stream}));
+  controller.mpd.sendMpdCommand = async command => {
+    calls.mpd.push(command);
+    return command.startsWith('add ') ? {error: 'MPD cannot read ' + stream} : {};
+  };
+  await assert.rejects(Promise.resolve(controller.clearAddPlayTrack({uri: 'yam/track/123'})), /mpd.add/);
+  assert.equal(calls.mpd.includes('play'), false);
+  assert.equal(JSON.stringify(calls.toast).includes(stream), false);
 });
 
 test('account settings never return a token and logout stops only this source', async () => {
@@ -212,12 +226,122 @@ test('account settings never return a token and logout stops only this source', 
   assert.equal(commands[0].params.token, 'test-token');
   await controller.logoutAccount();
   assert.equal(calls.stopped, undefined);
-  router.volumioGetState = () => ({service: 'media_str'});
+  router.volumioGetState = () => ({service: 'yam'});
   await controller.logoutAccount();
   assert.equal(calls.stopped, true);
   calls.stopped = false;
   router.volumioGetState = () => ({service: 'mpd'});
-  router.stateMachine.getTrack = () => ({service: 'media_str'});
+  router.stateMachine.getTrack = () => ({service: 'yam'});
   await controller.logoutAccount();
   assert.equal(calls.stopped, true);
+});
+
+test('journal persists safe errors, rotates files and masks stored and submitted tokens', () => {
+  const data = fs.mkdtempSync(path.join(os.tmpdir(), 'yam-journal-'));
+  try {
+    fs.writeFileSync(path.join(data, 'yandex-account.json'), JSON.stringify({token: 'stored-secret'}));
+    const journal = new Journal(data);
+    journal.protect('submitted-secret');
+    journal.write('ERROR', 'play.mpd.add', 'stored-secret submitted-secret OAuth other-token https://cdn.yandex.net/file?s=secret password="hidden"');
+    const contents = fs.readFileSync(journal.file, 'utf8');
+    for (const secret of ['stored-secret', 'submitted-secret', 'other-token', 'https://', 'hidden']) {
+      assert.equal(contents.includes(secret), false);
+    }
+    assert.match(new Journal(data).lastError(), /play.mpd.add/);
+    assert.equal(fs.statSync(journal.file).mode & 0o777, 0o600);
+    for (let i = 0; i < 300; i++) journal.write('INFO', 'test', 'Ж'.repeat(1000));
+    assert.ok(fs.statSync(journal.file + '.1').size < 265000);
+    assert.equal(journal.entries().length, 100);
+    assert.match(journal.lastError(), /play.mpd.add/);
+  } finally { fs.rmSync(data, {recursive: true, force: true}); }
+});
+
+test('play failure remains in diagnostics with its stage and journal HTML is escaped', async () => {
+  const {controller, router} = fixture();
+  const data = fs.mkdtempSync(path.join(os.tmpdir(), 'yam-journal-'));
+  try {
+    controller.journal = new Journal(data);
+    fakeBackend(controller, async () => ({uri: stream}));
+    controller.mpd.sendMpdCommand = async command => {
+      if (command.startsWith('add ')) throw new Error('MPD rejected ' + stream);
+    };
+    await assert.rejects(Promise.resolve(controller.clearAddPlayTrack({uri: 'yam/track/123'})));
+    const ui = await controller.getUIConfig();
+    const last = ui.sections.find(section => section.id === 'diagnostics').content[0].value;
+    assert.match(last, /mpd.add/);
+    assert.match(last, /MPD rejected/);
+    assert.equal(last.includes(stream), false);
+    controller.journal.write('ERROR', 'test', '<img src=x onerror=alert(1)>');
+    let modal;
+    router.broadcastMessage = (event, payload) => { assert.equal(event, 'openModal'); modal = payload; };
+    await controller.showJournal();
+    assert.equal(modal.message.includes('<img'), false);
+    assert.ok(modal.message.includes('&lt;img'));
+  } finally { fs.rmSync(data, {recursive: true, force: true}); }
+});
+
+test('repository update uses pinned package, native update API and survives its own onStop', async () => {
+  const data = fs.mkdtempSync(path.join(os.tmpdir(), 'yam-updater-'));
+  const journal = new Journal(data);
+  let updater;
+  const manager = {updatePlugin: async payload => {
+    assert.equal(payload.name, 'yam');
+    assert.equal(payload.category, 'music_service');
+    const name = payload.url.split('/').pop();
+    assert.equal(fs.readFileSync(path.join(data, 'drop', name), 'utf8'), 'pinned-package');
+    updater.stop();
+    assert.ok(fs.existsSync(updater.ready.file));
+  }};
+  updater = new Updater(data, manager, journal, {dropDirectory: path.join(data, 'drop')});
+  const sha = 'a'.repeat(40);
+  updater.run = async (action, output) => {
+    fs.writeFileSync(output, action === 'prepare' ? 'pinned-package' : 'previous-package');
+    return {version: '0.4.3', commit: sha};
+  };
+  try {
+    await updater.check();
+    await assert.rejects(updater.install('b'.repeat(40)), /Сначала/);
+    await updater.install(sha);
+    assert.equal(updater.busy, false);
+    assert.equal(updater.ready, null);
+    assert.equal(updater.work, null);
+    assert.equal(fs.readFileSync(path.join(data, 'previous-plugin.zip'), 'utf8'), 'previous-package');
+    assert.deepEqual(fs.readdirSync(path.join(data, 'drop')), []);
+  } finally { updater.cleanup(); fs.rmSync(data, {recursive: true, force: true}); }
+});
+
+test('failed preparation and changed packages never call Volumio or stop playback', async () => {
+  const data = fs.mkdtempSync(path.join(os.tmpdir(), 'yam-updater-'));
+  let installs = 0;
+  const updater = new Updater(data, {updatePlugin: () => { installs++; }}, new Journal(data));
+  try {
+    updater.run = async () => { throw new Error('GitHub HTTP 403'); };
+    await assert.rejects(updater.check(), /403/);
+    assert.equal(updater.ready, null);
+    assert.equal(updater.busy, false);
+    updater.run = async (action, output) => {
+      fs.writeFileSync(output, 'valid');
+      return {version: '0.4.3', commit: 'a'.repeat(40)};
+    };
+    await updater.check();
+    fs.writeFileSync(updater.ready.file, 'tampered');
+    await assert.rejects(updater.install('a'.repeat(40)), /изменился/);
+    assert.equal(installs, 0);
+  } finally { updater.cleanup(); fs.rmSync(data, {recursive: true, force: true}); }
+});
+
+test('duplicate check and install clicks are rejected while a job is running', async () => {
+  const data = fs.mkdtempSync(path.join(os.tmpdir(), 'yam-updater-'));
+  const updater = new Updater(data, {}, new Journal(data));
+  let complete;
+  updater.run = () => new Promise(resolve => { complete = resolve; });
+  try {
+    const first = updater.check();
+    await assert.rejects(updater.check(), /Дождитесь/);
+    await assert.rejects(updater.install('a'.repeat(40)), /Дождитесь/);
+    complete({current: true});
+    await first;
+    assert.equal(updater.busy, false);
+    assert.equal(updater.ready, null);
+  } finally { updater.cleanup(); fs.rmSync(data, {recursive: true, force: true}); }
 });
