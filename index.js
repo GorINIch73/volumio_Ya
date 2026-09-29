@@ -18,6 +18,7 @@ function ControllerYaM(context) {
   this.lifecycle = 0;
   this.generation = 0;
   this.playback = Promise.resolve();
+  this.browsePlayback = Promise.resolve();
   this.trackCache = new Map();
   this.journal = null;
   this.updater = null;
@@ -236,6 +237,37 @@ ControllerYaM.prototype.mpdCommand = async function (command) {
   // Volumio can resolve an MPD error as an object after showing a short toast.
   if (result && result.error) throw new Error(this.journal ? this.journal.sanitize(result.error) : redact(result.error));
   return result;
+};
+
+// A normal Volumio browse click replaces the queue. YaM keeps earlier pages
+// so that Previous can reach tracks played before the latest selection.
+ControllerYaM.prototype.playFromBrowse = async function (data) {
+  const selected = identifier(data && data.item);
+  const source = Array.isArray(data.list) ? data.list : [data.item];
+  if (source.length > 100) throw new Error('Слишком много треков');
+  let selectedIndex = -1;
+  const items = [];
+  const explicitIndex = Number.isInteger(data.index) && data.index >= 0 && data.index < source.length;
+  source.forEach((item, index) => {
+    if (!item || item.service !== SERVICE || item.type !== 'song') return;
+    const id = identifier(item);
+    if (id === selected && (explicitIndex ? index === data.index : selectedIndex === -1)) {
+      selectedIndex = items.length;
+    }
+    items.push({service: SERVICE, uri: SERVICE + '/track/' + id});
+  });
+  if (selectedIndex < 0) throw new Error('Выбранный трек отсутствует в списке');
+  const epoch = this.lifecycle;
+  const previous = this.browsePlayback;
+  this.browsePlayback = (async () => {
+    await previous.catch(() => {});
+    if (!this.started || epoch !== this.lifecycle) throw new Error('Запуск трека отменён');
+    this.commandRouter.preLoadItemsStop();
+    const result = await this.commandRouter.addQueueItems(items);
+    if (!this.started || epoch !== this.lifecycle) throw new Error('Запуск трека отменён');
+    return this.commandRouter.volumioPlay(result.firstItemIndex + selectedIndex);
+  })();
+  return this.browsePlayback;
 };
 
 ControllerYaM.prototype.clearAddPlayTrack = async function (track) {

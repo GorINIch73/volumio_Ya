@@ -422,6 +422,9 @@ test('browser opens playback only after its own YaM play request succeeds', () =
   started();
   assert.equal(routes.length, 0);
   assert.equal(socket.emit('playItemsList', {item}), 'sent');
+  assert.equal(sent.at(-1)[0], 'callMethod');
+  assert.equal(sent.at(-1)[1].method, 'playFromBrowse');
+  assert.equal(sent.at(-1)[1].data.item.uri, item.uri);
   assert.equal(routes.length, 0);
   listeners.yamPlaybackStarted({uri: 'yam/track/124'});
   assert.equal(routes.length, 0);
@@ -477,4 +480,30 @@ test('catalog failure keeps personal library available', async () => {
   const root = await controller.handleBrowseUri('yam');
   assert.equal(root.navigation.lists[0].items[1].uri, 'yam/collection/42');
   assert.match(root.navigation.lists[1].title, /временно недоступны/);
+});
+
+test('browse selection preserves earlier tracks and excludes navigation rows', async () => {
+  const {controller, router} = fixture();
+  const queue = [{service: 'yam', uri: 'yam/track/90'}];
+  const positions = [];
+  controller.started = true;
+  router.preLoadItemsStop = () => {};
+  router.addQueueItems = async items => {
+    const firstItemIndex = queue.length;
+    queue.push(...items);
+    return {firstItemIndex};
+  };
+  router.volumioPlay = async index => { positions.push(index); };
+  const a = {service: 'yam', type: 'song', uri: 'yam/track/123'};
+  const b = {...a, uri: 'yam/track/124'};
+  const list = [a, {service: 'yam', type: 'item-no-menu', title: 'Unavailable'}, b,
+    {service: 'yam', type: 'item-no-menu', uri: 'yam/collection/likes/50'}];
+  await controller.playFromBrowse({item: b, list, index: 2});
+  assert.deepEqual(queue.map(item => item.uri), ['yam/track/90', 'yam/track/123', 'yam/track/124']);
+  assert.deepEqual(positions, [2]);
+  await controller.playFromBrowse({item: a});
+  assert.equal(queue[0].uri, 'yam/track/90');
+  assert.deepEqual(positions, [2, 3]);
+  await assert.rejects(Promise.resolve(controller.playFromBrowse({item: b, list: [a], index: 0})));
+  assert.equal(queue.length, 4);
 });

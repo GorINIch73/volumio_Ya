@@ -1,6 +1,6 @@
 {
   "name": "yam",
-  "version": "0.4.7",
+  "version": "0.4.8",
   "description": "Yandex Music library and playback for Volumio",
   "main": "index.js",
   "author": "GorINIch73",
@@ -28,7 +28,7 @@
       "bookworm"
     ],
     "details": "Личная библиотека Яндекс Музыки в интерфейсе Volumio",
-    "changelog": "Каталог Яндекса: рекомендации, новые релизы, популярные плейлисты и альбомы"
+    "changelog": "Сохранение очереди при выборе трека из списка YaM"
   },
   "dependencies": {
     "kew": "0.7.0"

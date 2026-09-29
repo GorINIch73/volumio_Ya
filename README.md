@@ -1,6 +1,6 @@
 # YaM — Яндекс Музыка для Volumio
 
-Версия **0.4.7** — штатный плагин категории `music_service` для Volumio 4 (Bookworm). Управление находится в **Плагины → Установленные**, библиотека — в **Обзор → YaM**, воспроизведение — в общем плеере Volumio. Этот же интерфейс доступен на сенсорном экране и телефоне.
+Версия **0.4.8** — штатный плагин категории `music_service` для Volumio 4 (Bookworm). Управление находится в **Плагины → Установленные**, библиотека — в **Обзор → YaM**, воспроизведение — в общем плеере Volumio. Этот же интерфейс доступен на сенсорном экране и телефоне.
 
 Репозиторий: [GorINIch73/volumio_Ya](https://github.com/GorINIch73/volumio_Ya).
 
@@ -17,7 +17,7 @@ npm ci --ignore-scripts --no-audit --no-fund
 python3 scripts/build.py
 ```
 
-Результат: `dist/yam-0.4.7.zip`. Это ZIP плагина Volumio: `package.json`, `index.js`, `config.json`, `UIConfig.json`, установочные скрипты, Kew и внутренний Python-компонент расположены без внешней папки. Данные аккаунта в пакет не входят.
+Результат: `dist/yam-0.4.8.zip`. Это ZIP плагина Volumio: `package.json`, `index.js`, `config.json`, `UIConfig.json`, установочные скрипты, Kew и внутренний Python-компонент расположены без внешней папки. Данные аккаунта в пакет не входят.
 
 ## Первая установка на Volumio
 
@@ -26,7 +26,7 @@ python3 scripts/build.py
 1. **На компьютере**, из каталога репозитория, скопируйте ZIP на устройство:
 
    ```bash
-   scp dist/yam-0.4.7.zip volumio@volumio.local:/home/volumio/
+   scp dist/yam-0.4.8.zip volumio@volumio.local:/home/volumio/
    ```
 
    Если имя `volumio.local` не разрешается, замените его IP-адресом устройства, например `192.168.1.117`.
@@ -42,7 +42,7 @@ python3 scripts/build.py
    ```bash
    yam_install_dir=$(mktemp -d /home/volumio/yam-install.XXXXXX)
    cd "$yam_install_dir"
-   python3 -m zipfile -e ~/yam-0.4.7.zip .
+   python3 -m zipfile -e ~/yam-0.4.8.zip .
    chmod +x install.sh uninstall.sh
    volumio plugin install
    ```
@@ -75,12 +75,12 @@ python3 -m venv .venv-token
 
 ### Обновление установленного плагина вручную
 
-Скопируйте `dist/yam-0.4.7.zip` на устройство. Для уже установленного **YaM** с идентификатором `yam` используйте **update**, а не install. В новой пустой папке на Volumio:
+Скопируйте `dist/yam-0.4.8.zip` на устройство. Для уже установленного **YaM** с идентификатором `yam` используйте **update**, а не install. В новой пустой папке на Volumio:
 
 ```bash
 yam_update_dir=$(mktemp -d /home/volumio/yam-update.XXXXXX)
 cd "$yam_update_dir"
-python3 -m zipfile -e ~/yam-0.4.7.zip .
+python3 -m zipfile -e ~/yam-0.4.8.zip .
 chmod +x install.sh uninstall.sh
 volumio plugin update
 ```
@@ -165,3 +165,9 @@ Node-тесты требуют Node.js 18+. Сам плагин рассчита
 Разделы и формат обложек сверены с [исходным плагином achechulin](https://github.com/achechulin/volumio-plugins-sources/tree/master/yandex_music).
 Запросы каталога используют `/landing3`, альбомы — `/albums/{id}/with-tracks`; форматы сверены с [клиентом Яндекс Музыки](https://github.com/MarshalX/yandex-music-api/tree/main/yandex_music/_client).
 Реальная выдача персональных разделов зависит от аккаунта и ответа Яндекса; тесты используют фиксированные ответы API.
+
+### Очередь и предыдущие треки (0.4.8)
+
+Обычное нажатие на трек в YaM сохраняет существующую очередь и добавляет треки открытой страницы, начиная воспроизведение с выбранной песни. Кнопки страниц и недоступные строки в очередь не добавляются. Если та же страница уже стоит в конце очереди, штатный менеджер Volumio может использовать её повторно. Явное действие «Заменить и воспроизвести» сохраняет своё стандартное поведение.
+
+После обновления обязательно перезагрузите страницу каждого браузера/сенсорного экрана: обработчик клика находится в клиентском расширении. Удалённые ранее записи автоматически не восстанавливаются. Кнопка «Предыдущий» использует стандартное поведение Volumio: первое нажатие во время воспроизведения возвращает к началу песни, повторное — к предыдущему треку.
