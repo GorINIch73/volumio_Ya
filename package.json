@@ -1,6 +1,6 @@
 {
   "name": "yam",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "Yandex Music library and playback for Volumio",
   "main": "index.js",
   "author": "GorINIch73",
@@ -28,7 +28,7 @@
       "bookworm"
     ],
     "details": "Личная библиотека Яндекс Музыки в интерфейсе Volumio",
-    "changelog": "Полное переименование в YaM: пакет yam, новые пути настроек и URI треков; требуется новая установка"
+    "changelog": "Исправлена перегрузка запросов при запуске трека: очередь Python, приоритет аудиоссылки и кэш метаданных"
   },
   "dependencies": {
     "kew": "0.7.0"

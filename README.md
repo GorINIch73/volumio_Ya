@@ -1,6 +1,6 @@
 # YaM — Яндекс Музыка для Volumio
 
-Версия **0.4.3** — штатный плагин категории `music_service` для Volumio 4 (Bookworm). Управление находится в **Плагины → Установленные**, библиотека — в **Обзор → YaM**, воспроизведение — в общем плеере Volumio. Этот же интерфейс доступен на сенсорном экране и телефоне.
+Версия **0.4.4** — штатный плагин категории `music_service` для Volumio 4 (Bookworm). Управление находится в **Плагины → Установленные**, библиотека — в **Обзор → YaM**, воспроизведение — в общем плеере Volumio. Этот же интерфейс доступен на сенсорном экране и телефоне.
 
 Репозиторий: [GorINIch73/volumio_Ya](https://github.com/GorINIch73/volumio_Ya).
 
@@ -17,7 +17,7 @@ npm ci --ignore-scripts --no-audit --no-fund
 python3 scripts/build.py
 ```
 
-Результат: `dist/yam-0.4.3.zip`. Это ZIP плагина Volumio: `package.json`, `index.js`, `config.json`, `UIConfig.json`, установочные скрипты, Kew и внутренний Python-компонент расположены без внешней папки. Данные аккаунта в пакет не входят.
+Результат: `dist/yam-0.4.4.zip`. Это ZIP плагина Volumio: `package.json`, `index.js`, `config.json`, `UIConfig.json`, установочные скрипты, Kew и внутренний Python-компонент расположены без внешней папки. Данные аккаунта в пакет не входят.
 
 ## Первая установка на Volumio
 
@@ -26,7 +26,7 @@ python3 scripts/build.py
 1. **На компьютере**, из каталога репозитория, скопируйте ZIP на устройство:
 
    ```bash
-   scp dist/yam-0.4.3.zip volumio@volumio.local:/home/volumio/
+   scp dist/yam-0.4.4.zip volumio@volumio.local:/home/volumio/
    ```
 
    Если имя `volumio.local` не разрешается, замените его IP-адресом устройства, например `192.168.1.117`.
@@ -42,7 +42,7 @@ python3 scripts/build.py
    ```bash
    yam_install_dir=$(mktemp -d /home/volumio/yam-install.XXXXXX)
    cd "$yam_install_dir"
-   python3 -m zipfile -e ~/yam-0.4.3.zip .
+   python3 -m zipfile -e ~/yam-0.4.4.zip .
    chmod +x install.sh uninstall.sh
    volumio plugin install
    ```
@@ -75,12 +75,12 @@ python3 -m venv .venv-token
 
 ### Обновление установленного плагина вручную
 
-Скопируйте `dist/yam-0.4.3.zip` на устройство. Для уже установленного **YaM** с идентификатором `yam` используйте **update**, а не install. В новой пустой папке на Volumio:
+Скопируйте `dist/yam-0.4.4.zip` на устройство. Для уже установленного **YaM** с идентификатором `yam` используйте **update**, а не install. В новой пустой папке на Volumio:
 
 ```bash
 yam_update_dir=$(mktemp -d /home/volumio/yam-update.XXXXXX)
 cd "$yam_update_dir"
-python3 -m zipfile -e ~/yam-0.4.3.zip .
+python3 -m zipfile -e ~/yam-0.4.4.zip .
 chmod +x install.sh uninstall.sh
 volumio plugin update
 ```

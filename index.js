@@ -18,6 +18,7 @@ function ControllerYaM(context) {
   this.lifecycle = 0;
   this.generation = 0;
   this.playback = Promise.resolve();
+  this.trackCache = new Map();
   this.journal = null;
   this.updater = null;
 }
@@ -83,6 +84,7 @@ ControllerYaM.prototype.removeFromBrowseSources = function () {
 
 ControllerYaM.prototype.onStop = async function () {
   if (this.updater) this.updater.stop();
+  this.trackCache.clear();
   this.lifecycle++;
   this.started = false;
   this.generation++;
@@ -160,6 +162,7 @@ ControllerYaM.prototype.handleBrowseUri = async function (uri) {
   if (!match) throw new Error('Неизвестный раздел Яндекс Музыки');
   const offset = Number(match[2] || 0);
   const result = await this.request('library', {kind: match[1], offset});
+  for (const track of result.tracks) this.cacheTrack(track);
   const items = result.tracks.map(track => track.available ? trackItem(track) :
     {service: SERVICE, type: 'item-no-menu', title: track.title + ' — недоступен', icon: 'fa fa-ban'});
   if (result.next_offset !== null) {
@@ -169,14 +172,29 @@ ControllerYaM.prototype.handleBrowseUri = async function (uri) {
   return navigation(result.title, items, previous);
 };
 
+ControllerYaM.prototype.cacheTrack = function (track) {
+  this.trackCache.delete(String(track.id));
+  this.trackCache.set(String(track.id), {track, expires: Date.now() + 5 * 60 * 1000});
+  if (this.trackCache.size > 500) this.trackCache.delete(this.trackCache.keys().next().value);
+};
+
+ControllerYaM.prototype.resolveTrack = async function (data) {
+  const id = identifier(data);
+  const cached = this.trackCache.get(id);
+  if (cached && cached.expires > Date.now() && cached.track.available !== false) return cached.track;
+  const track = await this.request('track', {id});
+  this.cacheTrack(track);
+  return track;
+};
+
 ControllerYaM.prototype.explodeUri = async function (data) {
   this.note('INFO', 'queue', 'Получение данных трека');
-  const track = await this.request('track', {id: identifier(data)});
+  const track = await this.resolveTrack(data);
   return [trackItem(track, 'track')];
 };
 
 ControllerYaM.prototype.getTrackInfo = async function (data) {
-  const track = await this.request('track', {id: identifier(data)});
+  const track = await this.resolveTrack(data);
   return [trackItem(track)];
 };
 
@@ -322,6 +340,7 @@ ControllerYaM.prototype.installRepository = async function (data) {
 
 ControllerYaM.prototype.saveAccount = async function (data) {
   if (this.journal) this.journal.protect(data && data.token);
+  this.trackCache.clear();
   await this.request('login', {token: data && data.token});
   this.commandRouter.pushToastMessage('success', NAME, 'Аккаунт подключён. Откройте «Обзор».');
   return this.getUIConfig();
@@ -332,6 +351,7 @@ ControllerYaM.prototype.checkAccount = async function () {
 };
 ControllerYaM.prototype.logoutAccount = async function () {
   if (this.ownsPlayback()) await this.commandRouter.volumioStop();
+  this.trackCache.clear();
   await this.request('logout');
   this.commandRouter.pushToastMessage('success', NAME, 'Вы вышли из аккаунта');
   return this.getUIConfig();

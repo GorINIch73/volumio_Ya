@@ -345,3 +345,52 @@ test('duplicate check and install clicks are rejected while a job is running', a
     assert.equal(updater.ready, null);
   } finally { updater.cleanup(); fs.rmSync(data, {recursive: true, force: true}); }
 });
+
+test('playlist metadata serves 50 queue expansions without new API requests', async () => {
+  const {controller} = fixture();
+  let requests = 0;
+  const tracks = Array.from({length: 50}, (_, i) => ({...track, id: String(i + 1)}));
+  fakeBackend(controller, async method => {
+    requests++;
+    assert.equal(method, 'library');
+    return {title: 'Playlist', tracks, next_offset: null};
+  });
+  const page = await controller.handleBrowseUri('yam/collection/likes');
+  const items = await Promise.all(page.navigation.lists[0].items.map(item => controller.explodeUri(item)));
+  assert.equal(items.length, 50);
+  assert.equal(requests, 1);
+  assert.equal(items[49][0].uri, 'yam/track/50');
+});
+
+test('worker queues a playlist burst and sends playback before waiting metadata', async () => {
+  const Backend = require('../lib/backend');
+  const backend = Object.create(Backend.prototype);
+  Object.assign(backend, {pending: new Map(), queue: [], sequence: 0, buffer: '', closed: false});
+  const sent = [];
+  backend.process = {stdin: {write: line => sent.push(JSON.parse(line))}, exitCode: 0};
+  const requests = Array.from({length: 50}, (_, i) => backend.request('track', {id: String(i)}));
+  const playing = backend.request('stream', {id: '1'});
+  try {
+    assert.equal(sent.length, 1);
+    backend.receive(JSON.stringify({id: sent[0].id, result: track}) + '\n');
+    assert.equal(sent[1].method, 'stream');
+    backend.receive(JSON.stringify({id: sent[1].id, result: {uri: stream}}) + '\n');
+    assert.deepEqual(await playing, {uri: stream});
+    for (let i = 2; i < 51; i++) {
+      backend.receive(JSON.stringify({id: sent[i].id, result: track}) + '\n');
+    }
+    assert.equal((await Promise.all(requests)).length, 50);
+    assert.equal(backend.pending.size, 0);
+  } finally { await backend.stop(); }
+});
+
+test('stopping worker rejects both active and queued requests', async () => {
+  const Backend = require('../lib/backend');
+  const backend = Object.create(Backend.prototype);
+  Object.assign(backend, {pending: new Map(), queue: [], sequence: 0, buffer: '', closed: false});
+  backend.process = {stdin: {write: () => {}}, exitCode: 0};
+  const results = Promise.allSettled([backend.request('track'), backend.request('stream')]);
+  await backend.stop();
+  assert.deepEqual((await results).map(result => result.status), ['rejected', 'rejected']);
+  assert.equal(backend.queue.length, 0);
+});
