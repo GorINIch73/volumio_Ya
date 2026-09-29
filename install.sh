@@ -11,5 +11,7 @@ if [ ! -f node_modules/kew/kew.js ]; then
 fi
 node -e 'require("./index.js")'
 sudo install -d -m 0700 -o volumio -g volumio /data/configuration/music_service/yam
+sudo python3 python/ui_extension.py install
+echo "Reload the browser to enable YaM automatic playback view."
 echo "Enable YaM in Plugins, then open its settings to sign in."
 echo "plugininstallend"

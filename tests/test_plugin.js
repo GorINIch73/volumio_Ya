@@ -394,3 +394,87 @@ test('stopping worker rejects both active and queued requests', async () => {
   assert.deepEqual((await results).map(result => result.status), ['rejected', 'rejected']);
   assert.equal(backend.queue.length, 0);
 });
+
+test('browser opens playback only after its own YaM play request succeeds', () => {
+  const vm = require('node:vm');
+  const listeners = {};
+  const routes = [];
+  const timers = new Map();
+  let sequence = 0;
+  const sent = [];
+  const socket = {on: (event, callback) => { listeners[event] = callback; },
+    emit: (...args) => { sent.push(args); return 'sent'; }};
+  const services = {socketService: socket, '$state': {go: route => routes.push(route)},
+    '$rootScope': {$evalAsync: callback => callback()}};
+  const window = {angular: {element: () => ({injector: () => ({get: key => services[key]})})},
+    setTimeout: callback => { timers.set(++sequence, callback); return sequence; },
+    clearTimeout: id => timers.delete(id)};
+  const source = fs.readFileSync(path.join(__dirname, '../lib/now-playing.js'), 'utf8');
+  const context = {window, document: {documentElement: {}, readyState: 'complete'}};
+  vm.runInNewContext(source, context);
+  const emit = socket.emit;
+  vm.runInNewContext(source, context);
+  assert.equal(socket.emit, emit);
+  const item = {service: 'yam', uri: 'yam/track/123'};
+  const started = () => listeners.yamPlaybackStarted({uri: item.uri});
+  started();
+  socket.emit('addToQueue', item);
+  started();
+  assert.equal(routes.length, 0);
+  assert.equal(socket.emit('playItemsList', {item}), 'sent');
+  assert.equal(routes.length, 0);
+  listeners.yamPlaybackStarted({uri: 'yam/track/124'});
+  assert.equal(routes.length, 0);
+  started();
+  assert.deepEqual(routes, ['volumio.playback']);
+  started();
+  assert.equal(routes.length, 1);
+  socket.emit('addPlay', item);
+  socket.emit('stop');
+  started();
+  socket.emit('replaceAndPlay', item);
+  for (const callback of timers.values()) callback();
+  started();
+  socket.emit('playItemsList', {item});
+  listeners.disconnect();
+  started();
+  assert.equal(routes.length, 1);
+  assert.equal(sent[0][0], 'addToQueue');
+});
+
+test('catalog uses native grid/list views and opens albums and foreign playlists', async () => {
+  const {controller} = fixture();
+  const requests = [];
+  fakeBackend(controller, async (method, params) => {
+    requests.push({method, params});
+    if (method === 'status') return {configured: true};
+    if (method === 'catalog') return {sections: [{title: 'Новые релизы', items: [
+      {uri: 'yam/album/8', title: 'Album', albumart: 'https://avatars.yandex.net/album/600x600'}]}]};
+    if (!params) return {playlists: []};
+    return {title: 'Tracks', tracks: [track], next_offset: params.offset === 0 ? 50 : null};
+  });
+  const root = await controller.handleBrowseUri('yam');
+  assert.deepEqual(root.navigation.lists[1].availableListViews, ['grid', 'list']);
+  assert.equal(root.navigation.lists[1].items[0].uri, 'yam/album/8');
+  assert.equal(root.navigation.lists[1].items[0].albumart, 'https://avatars.yandex.net/album/600x600');
+  const page = await controller.handleBrowseUri('yam/playlist/99/12');
+  assert.deepEqual(requests.at(-1).params, {owner: '99', kind: '12', offset: 0});
+  assert.equal(page.navigation.lists[0].items[1].uri, 'yam/playlist/99/12/50');
+  assert.deepEqual(page.navigation.lists[0].availableListViews, ['list']);
+  const album = await controller.handleBrowseUri('yam/album/8/50');
+  assert.deepEqual(requests.at(-1).params, {album: '8', offset: 50});
+  assert.equal(album.navigation.prev.uri, 'yam/album/8/0');
+  await assert.rejects(Promise.resolve(controller.handleBrowseUri('yam/playlist/99/12/../13')));
+});
+
+test('catalog failure keeps personal library available', async () => {
+  const {controller} = fixture();
+  fakeBackend(controller, async method => {
+    if (method === 'status') return {configured: true};
+    if (method === 'catalog') throw new Error('Network failure');
+    return {playlists: [{kind: '42', title: 'Mine'}]};
+  });
+  const root = await controller.handleBrowseUri('yam');
+  assert.equal(root.navigation.lists[0].items[1].uri, 'yam/collection/42');
+  assert.match(root.navigation.lists[1].title, /временно недоступны/);
+});

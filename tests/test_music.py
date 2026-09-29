@@ -50,6 +50,49 @@ class Music(unittest.TestCase):
         with patch.object(self.music, "yandex", return_value=[]):
             self.assertEqual(self.music.library({}), {"playlists": []})
 
+    def test_catalog_blocks_covers_and_foreign_playlist_owner(self):
+        playlist = {"uid": 99, "kind": 12, "title": "For you",
+                    "cover": {"itemsUri": ["avatars.yandex.net/image/%%"]}}
+        album = {"id": 8, "title": "New album", "coverUri": "avatars.yandex.net/album/%%"}
+        blocks = [
+            {"type": "personal-playlists", "entities": [{"data": {"data": playlist}}]},
+            {"type": "new-releases", "entities": [{"data": album}, {"data": album}, {"data": {}}]},
+            {"type": "new-playlists", "entities": [{"data": playlist}]},
+            {"type": "play_contexts", "entities": [
+                {"data": {"context": "album", "payload": album}},
+                {"data": {"context": "artist", "payload": {}}}]},
+        ]
+        with patch.object(self.music, "yandex", return_value={"blocks": blocks}) as request:
+            sections = self.music.catalog()["sections"]
+        self.assertIn("/landing3?blocks=", request.call_args.args[1])
+        self.assertEqual(len(sections), 4)
+        self.assertEqual(sections[0]["items"][0]["uri"], "yam/playlist/99/12")
+        self.assertEqual(sections[0]["items"][0]["albumart"], "https://avatars.yandex.net/image/600x600")
+        self.assertEqual(len(sections[1]["items"]), 1)
+        self.assertEqual(sections[1]["items"][0]["uri"], "yam/album/8")
+        with patch.object(self.music, "yandex", return_value={"blocks": []}):
+            self.assertEqual(self.music.catalog(), {"sections": []})
+
+    def test_foreign_playlist_uses_its_owner(self):
+        with patch.object(self.music, "yandex", side_effect=[
+            {"title": "Editorial", "tracks": [{"id": 7}]}, [TRACK]
+        ]) as request:
+            page = self.music.library({"owner": ["99"], "kind": ["12"]})
+        self.assertEqual(request.call_args_list[0].args[1], "/users/99/playlists/12")
+        self.assertEqual(page["tracks"][0]["id"], "7")
+
+    def test_album_volumes_pagination_and_cover_fallback(self):
+        tracks = [{**TRACK, "id": i, "albums": []} for i in range(53)]
+        album = {"id": 8, "title": "Album", "coverUri": "avatars.yandex.net/album/%%",
+                 "volumes": [tracks[:30], tracks[30:]]}
+        with patch.object(self.music, "yandex", return_value=album) as request:
+            page = self.music.library({"album": ["8"], "offset": ["50"]})
+        self.assertEqual(request.call_args.args[1], "/albums/8/with-tracks")
+        self.assertEqual([t["id"] for t in page["tracks"]], ["50", "51", "52"])
+        self.assertEqual(page["tracks"][0]["albumart"], "https://avatars.yandex.net/album/600x600")
+        self.assertIsNone(page["next_offset"])
+        self.assertEqual(page["total"], 53)
+
     def test_missing_account_and_bad_identifiers_do_not_contact_services(self):
         with patch.object(app, "json_request") as request:
             for value in ("http://evil", "../42", "1?token=x", None):

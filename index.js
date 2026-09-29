@@ -124,21 +124,23 @@ ControllerYaM.prototype.request = function (method, params) {
   });
 };
 
-function navigation(title, items, previous) {
+function navigation(title, items, previous, views) {
   return {navigation: {prev: {uri: previous || SERVICE}, lists: [{
-    title, availableListViews: ['list'], items
+    title, availableListViews: views || ['list'], items
   }]}};
 }
 
-function folder(title, uri, icon) {
+function folder(title, uri, icon, albumart) {
   // Collections are browse-only until whole-playlist enqueue is implemented.
-  return {service: SERVICE, type: 'item-no-menu', title, uri, icon: icon || 'fa fa-folder-open-o'};
+  return {service: SERVICE, type: 'item-no-menu', title, uri,
+    albumart: albumart || '/albumart', icon: icon || 'fa fa-folder-open-o'};
 }
 
 function trackItem(track, type) {
   return {service: SERVICE, type: type || 'song', uri: SERVICE + '/track/' + track.id,
     title: track.title, name: track.title, artist: track.artist, album: track.album,
-    duration: track.duration, trackType: 'mp3', icon: 'fa fa-music'};
+    duration: track.duration, albumart: track.albumart || '/albumart',
+    trackType: 'mp3', icon: 'fa fa-music'};
 }
 
 function identifier(data) {
@@ -155,20 +157,47 @@ ControllerYaM.prototype.handleBrowseUri = async function (uri) {
       return navigation('Войдите в аккаунт в настройках плагина', [], '/');
     }
     const result = await this.request('library');
-    return navigation(NAME, [folder('Мне нравится', SERVICE + '/collection/likes', 'fa fa-heart')]
-      .concat(result.playlists.map(item => folder(item.title, SERVICE + '/collection/' + item.kind))), '/');
+    const page = navigation('Моя музыка', [folder('Мне нравится', SERVICE + '/collection/likes', 'fa fa-heart')]
+      .concat(result.playlists.map(item => Object.assign(
+        folder(item.title, SERVICE + '/collection/' + item.kind, undefined, item.albumart),
+        {meta: 'Открыть список треков'}))), '/', ['grid', 'list']);
+    try {
+      const catalog = await this.request('catalog');
+      for (const section of catalog.sections) {
+        page.navigation.lists.push({title: section.title, availableListViews: ['grid', 'list'],
+          items: section.items.map(item => folder(item.title, item.uri, undefined, item.albumart))});
+      }
+    } catch (_) {
+      page.navigation.lists.push({title: 'Подборки временно недоступны. Откройте YaM ещё раз, чтобы повторить.',
+        availableListViews: ['list'], items: []});
+    }
+    return page;
   }
-  const match = /^yam\/collection\/(likes|[0-9]{1,24})(?:\/([0-9]{1,6}))?$/.exec(uri);
-  if (!match) throw new Error('Неизвестный раздел Яндекс Музыки');
-  const offset = Number(match[2] || 0);
-  const result = await this.request('library', {kind: match[1], offset});
+  const collection = /^yam\/collection\/(likes|[0-9]{1,24})(?:\/([0-9]{1,6}))?$/.exec(uri);
+  const playlist = /^yam\/playlist\/([0-9]{1,24})\/([0-9]{1,24})(?:\/([0-9]{1,6}))?$/.exec(uri);
+  const album = /^yam\/album\/([0-9]{1,24})(?:\/([0-9]{1,6}))?$/.exec(uri);
+  let params, base, offset;
+  if (collection) {
+    offset = Number(collection[2] || 0);
+    params = {kind: collection[1], offset};
+    base = SERVICE + '/collection/' + collection[1];
+  } else if (playlist) {
+    offset = Number(playlist[3] || 0);
+    params = {owner: playlist[1], kind: playlist[2], offset};
+    base = SERVICE + '/playlist/' + playlist[1] + '/' + playlist[2];
+  } else if (album) {
+    offset = Number(album[2] || 0);
+    params = {album: album[1], offset};
+    base = SERVICE + '/album/' + album[1];
+  } else throw new Error('Неизвестный раздел Яндекс Музыки');
+  const result = await this.request('library', params);
   for (const track of result.tracks) this.cacheTrack(track);
   const items = result.tracks.map(track => track.available ? trackItem(track) :
     {service: SERVICE, type: 'item-no-menu', title: track.title + ' — недоступен', icon: 'fa fa-ban'});
   if (result.next_offset !== null) {
-    items.push(folder('Следующие 50 треков', SERVICE + '/collection/' + match[1] + '/' + result.next_offset));
+    items.push(folder('Следующие 50 треков', base + '/' + result.next_offset));
   }
-  const previous = offset ? SERVICE + '/collection/' + match[1] + '/' + Math.max(0, offset - 50) : SERVICE;
+  const previous = offset ? base + '/' + Math.max(0, offset - 50) : SERVICE;
   return navigation(result.title, items, previous);
 };
 
@@ -244,6 +273,13 @@ ControllerYaM.prototype.clearAddPlayTrack = async function (track) {
     })();
     await this.playback;
     this.note('INFO', 'play', 'Трек передан проигрывателю');
+    if (generation === this.generation) {
+      try {
+        this.commandRouter.broadcastMessage('yamPlaybackStarted', {uri: track.uri || track});
+      } catch (_) {
+        this.note('WARN', 'play.ui', 'Не удалось открыть экран текущего трека');
+      }
+    }
   } catch (error) {
     // MPD errors may echo signed URLs; never forward their raw messages.
     const message = 'Не удалось запустить трек (' + stage + '): ' + error.message;

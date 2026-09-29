@@ -190,29 +190,119 @@ class Music:
         return value["result"]
 
     @staticmethod
+    def cover_url(value):
+        albums = value.get("albums") or []
+        cover = value.get("cover") or {}
+        candidates = ([value.get("coverUri"), cover.get("uri")]
+                      + (cover.get("itemsUri") or [])
+                      + [album.get("coverUri") for album in albums])
+        for cover in candidates:
+            if not isinstance(cover, str) or not cover.strip():
+                continue
+            cover = cover.strip().replace("%%", "600x600")
+            if cover.startswith("//"):
+                cover = "https:" + cover
+            elif "://" not in cover:
+                cover = "https://" + cover
+            try:
+                parsed = urlsplit(cover)
+                if (parsed.scheme in ("http", "https") and parsed.hostname
+                        and not parsed.username and not parsed.password
+                        and parsed.port in (None, 80, 443)
+                        and not any(c.isspace() for c in cover)):
+                    return parsed._replace(scheme="https").geturl()
+            except ValueError:
+                pass
+        return ""
+
+    @staticmethod
     def track(value):
         albums = value.get("albums") or []
         return {"id": music_id(value["id"]), "title": str(value.get("title") or "Без названия")[:500],
                 "artist": ", ".join(str(a.get("name", "")) for a in value.get("artists", []))[:500],
                 "album": str(albums[0].get("title", ""))[:500] if albums else "",
                 "duration": max(0, int(value.get("durationMs") or 0) // 1000),
+                "albumart": Music.cover_url(value),
                 "available": value.get("available") is not False}
+
+    @staticmethod
+    def catalog_item(value, kind):
+        if kind == "album":
+            uri = "yam/album/" + music_id(value["id"])
+        else:
+            owner = value.get("uid") or (value.get("owner") or {}).get("uid")
+            uri = "yam/playlist/" + music_id(owner) + "/" + music_id(value["kind"])
+        return {"uri": uri, "title": str(value.get("title") or "Без названия")[:500],
+                "albumart": Music.cover_url(value)}
+
+    def catalog(self):
+        token, _ = self.session()
+        blocks = "personalplaylists,new-releases,new-playlists,play_contexts"
+        result = self.yandex(token, "/landing3?" + urlencode({"blocks": blocks}))
+        definitions = [
+            ("personal-playlists", "Подобрано для вас", "playlist"),
+            ("new-releases", "Новые релизы", "album"),
+            ("new-playlists", "Популярные плейлисты", "playlist"),
+            ("play-contexts", "Недавно слушали", "context"),
+        ]
+        aliases = {"personalplaylists": "personal-playlists", "play_contexts": "play-contexts"}
+        grouped = {}
+        for block in result.get("blocks") or []:
+            block_type = aliases.get(block.get("type"), block.get("type"))
+            grouped.setdefault(block_type, []).extend(block.get("entities") or [])
+        sections = []
+        for block_type, title, kind in definitions:
+            items, seen = [], set()
+            for entity in grouped.get(block_type, []):
+                try:
+                    value = entity.get("data") or {}
+                    item_kind = kind
+                    if block_type == "personal-playlists":
+                        value = value.get("data", value)
+                    if kind == "context":
+                        item_kind = value.get("context")
+                        if item_kind not in ("album", "playlist"):
+                            continue
+                        value = value.get("payload") or {}
+                    item = self.catalog_item(value, item_kind)
+                except (AccountError, KeyError, TypeError, AttributeError, ValueError):
+                    # Unsupported promotional entities must not hide the library.
+                    continue
+                if item["uri"] not in seen:
+                    items.append(item)
+                    seen.add(item["uri"])
+            if items:
+                sections.append({"title": title, "items": items})
+        return {"sections": sections}
 
     def library(self, query):
         token, uid = self.session()
         kind = query.get("kind", [""])[0]
-        if not kind:
+        album = query.get("album", [""])[0]
+        if not kind and not album:
             values = self.yandex(token, f"/users/{uid}/playlists/list")
             return {"playlists": [{"kind": music_id(p["kind"]), "title": str(p.get("title", "Без названия"))[:500],
-                                   "count": p.get("trackCount", 0)} for p in values]}
+                                   "count": p.get("trackCount", 0), "albumart": self.cover_url(p)} for p in values]}
         offset = int(query.get("offset", ["0"])[0])
         if not 0 <= offset <= 100000:
             raise AccountError("Некорректная страница")
+        if album:
+            collection = self.yandex(token, f"/albums/{music_id(album)}/with-tracks")
+            entries = [track for volume in collection.get("volumes") or [] for track in volume]
+            tracks = []
+            for value in entries[offset:offset + 50]:
+                value = dict(value)
+                if not value.get("albums"):
+                    value["albums"] = [collection]
+                tracks.append(self.track(value))
+            return {"title": str(collection.get("title") or "Альбом")[:500], "tracks": tracks,
+                    "total": len(entries), "next_offset": offset + 50 if offset + 50 < len(entries) else None}
         if kind == "likes":
             collection = self.yandex(token, f"/users/{uid}/likes/tracks")["library"]
             title = "Мне нравится"
         else:
-            collection = self.yandex(token, f"/users/{uid}/playlists/{music_id(kind)}")
+            owner = music_id(query.get("owner", [uid])[0])
+            collection = self.yandex(token, f"/users/{owner}/playlists/{music_id(kind)}")
             title = str(collection.get("title", "Плейлист"))[:500]
         entries = collection.get("tracks") or []
         page = entries[offset:offset + 50]

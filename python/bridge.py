@@ -27,9 +27,11 @@ class Backend:
             return self.account.check()
         if method == "logout":
             return self.account.logout()
+        if method == "catalog":
+            return self.music.catalog()
         if method == "library":
             return self.music.library({key: [str(value)] for key, value in params.items()
-                                       if key in ("kind", "offset")})
+                                       if key in ("kind", "offset", "owner", "album")})
         if method in ("track", "stream"):
             token, _ = self.music.session()
             identifier = music_id(params.get("id"))
