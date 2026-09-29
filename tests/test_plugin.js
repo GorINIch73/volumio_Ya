@@ -404,7 +404,8 @@ test('browser opens playback only after its own YaM play request succeeds', () =
   const sent = [];
   const socket = {on: (event, callback) => { listeners[event] = callback; },
     emit: (...args) => { sent.push(args); return 'sent'; }};
-  const services = {socketService: socket, '$state': {go: route => routes.push(route)},
+  const browse = {lists: []};
+  const services = {socketService: socket, browseService: browse, '$state': {go: route => routes.push(route)},
     '$rootScope': {$evalAsync: callback => callback()}};
   const window = {angular: {element: () => ({injector: () => ({get: key => services[key]})})},
     setTimeout: callback => { timers.set(++sequence, callback); return sequence; },
@@ -415,7 +416,9 @@ test('browser opens playback only after its own YaM play request succeeds', () =
   const emit = socket.emit;
   vm.runInNewContext(source, context);
   assert.equal(socket.emit, emit);
-  const item = {service: 'yam', uri: 'yam/track/123'};
+  const item = {service: 'yam', type: 'song', uri: 'yam/track/123'};
+  const following = {...item, uri: 'yam/track/124'};
+  browse.lists = [{items: [item, following]}];
   const started = () => listeners.yamPlaybackStarted({uri: item.uri});
   started();
   socket.emit('addToQueue', item);
@@ -425,6 +428,8 @@ test('browser opens playback only after its own YaM play request succeeds', () =
   assert.equal(sent.at(-1)[0], 'callMethod');
   assert.equal(sent.at(-1)[1].method, 'playFromBrowse');
   assert.equal(sent.at(-1)[1].data.item.uri, item.uri);
+  assert.equal(sent.at(-1)[1].data.list[1].uri, following.uri);
+  assert.equal(sent.at(-1)[1].data.index, 0);
   assert.equal(routes.length, 0);
   listeners.yamPlaybackStarted({uri: 'yam/track/124'});
   assert.equal(routes.length, 0);
@@ -506,4 +511,81 @@ test('browse selection preserves earlier tracks and excludes navigation rows', a
   assert.deepEqual(positions, [2, 3]);
   await assert.rejects(Promise.resolve(controller.playFromBrowse({item: b, list: [a], index: 0})));
   assert.equal(queue.length, 4);
+});
+
+test('Next routes to YaM before the first MPD metadata update, including resume', async () => {
+  const {controller, router, calls} = fixture();
+  fakeBackend(controller, async () => ({uri: stream}));
+  const machine = router.stateMachine;
+  machine.consumeState = {};
+  machine.setConsumeUpdateService = async service => {
+    calls.consume = service;
+    machine.consumeState.service = service;
+  };
+  await controller.clearAddPlayTrack({uri: 'yam/track/123'});
+  assert.equal(calls.consume, 'mpd');
+  assert.equal(machine.consumeState.service, 'yam');
+  // Mirrors Volumio's dispatch before any MPD pushState has arrived.
+  const plugins = {yam: controller, mpd: {next: () => assert.fail('MPD has only one track')}};
+  await plugins[machine.consumeState.service].next();
+  assert.equal(calls.next, true);
+  await controller.resume();
+  assert.equal(machine.consumeState.service, 'yam');
+});
+
+test('Next after choosing a playlist song follows its neighbour with older tracks retained', async () => {
+  const {controller, router} = fixture();
+  const queue = [{service: 'yam', uri: 'yam/track/90'}];
+  fakeBackend(controller, async () => ({uri: stream}));
+  router.preLoadItemsStop = () => {};
+  router.addQueueItems = async items => {
+    const firstItemIndex = queue.length;
+    queue.push(...items);
+    return {firstItemIndex};
+  };
+  let position = 0;
+  router.volumioPlay = async index => { position = index; };
+  router.stateMachine.next = async () => { position++; };
+  const list = ['101', '102', '103'].map(id => ({service: 'yam', type: 'song', uri: 'yam/track/' + id}));
+  await controller.playFromBrowse({item: list[1], list, index: 1});
+  assert.equal(queue[position].uri, 'yam/track/102');
+  await controller.clearAddPlayTrack(queue[position]);
+  assert.equal(router.stateMachine.consumeState.service, 'yam');
+  await controller.next();
+  assert.equal(queue[position].uri, 'yam/track/103');
+  assert.equal(queue[0].uri, 'yam/track/90');
+});
+
+test('late MPD stop cannot advance a new track; real end still advances', async () => {
+  const MpdUpdates = require('../lib/mpd-updates');
+  const readers = [];
+  const pushed = [];
+  const mpd = {getState: () => new Promise(resolve => readers.push(resolve)),
+    pushState: state => { pushed.push(state); return Promise.resolve(); }};
+  const originalGet = mpd.getState;
+  const originalPush = mpd.pushState;
+  let owned = true;
+  const gate = new MpdUpdates(mpd, () => owned);
+  try {
+    const oldRead = mpd.getState();
+    const epoch = gate.begin(stream);
+    const duringRead = mpd.getState();
+    const ready = gate.ready(epoch);
+    readers[2]({status: 'play', uri: stream});
+    await ready;
+    readers[0]({status: 'stop', uri: stream});
+    readers[1]({status: 'stop', uri: null});
+    await mpd.pushState(await oldRead);
+    await mpd.pushState(await duringRead);
+    assert.deepEqual(pushed.map(state => state.status), ['play']);
+    const ended = mpd.getState();
+    readers[3]({status: 'stop', uri: stream});
+    await mpd.pushState(await ended);
+    assert.deepEqual(pushed.map(state => state.status), ['play', 'stop']);
+    owned = false;
+    await mpd.pushState({status: 'play', uri: 'other-source'});
+    assert.equal(pushed.at(-1).uri, 'other-source');
+  } finally { gate.close(); }
+  assert.equal(mpd.getState, originalGet);
+  assert.equal(mpd.pushState, originalPush);
 });

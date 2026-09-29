@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const libQ = require('kew');
 const Backend = require('./lib/backend');
+const MpdUpdates = require('./lib/mpd-updates');
 const {Journal, redact} = require('./lib/journal');
 const Updater = require('./lib/updater');
 const SERVICE = 'yam';
@@ -50,9 +51,14 @@ ControllerYaM.prototype.startBackend = async function (epoch) {
   if (epoch !== this.lifecycle) throw new Error('Запуск плагина отменён');
   this.mpd = this.commandRouter.pluginManager.getPlugin('music_service', 'mpd');
   if (!this.mpd) throw new Error('Проигрыватель MPD недоступен');
+  if (this.mpdUpdates) this.mpdUpdates.close();
+  if (typeof this.mpd.getState === 'function' && typeof this.mpd.pushState === 'function') {
+    this.mpdUpdates = new MpdUpdates(this.mpd, () => this.started && this.ownsPlayback());
+  }
   const backend = new Backend(this.data, reason => {
     if (this.backend !== backend) return;
     this.started = false;
+    if (this.mpdUpdates) this.mpdUpdates.close();
     this.generation++;
     this.removeFromBrowseSources();
     this.note('ERROR', 'backend', reason || 'Компонент Яндекс Музыки остановлен');
@@ -67,6 +73,7 @@ ControllerYaM.prototype.startBackend = async function (epoch) {
     this.note('INFO', 'start', 'Плагин запущен');
   } catch (error) {
     this.started = false;
+    if (this.mpdUpdates) this.mpdUpdates.close();
     await backend.stop();
     if (this.backend === backend) this.backend = null;
     throw error;
@@ -89,6 +96,7 @@ ControllerYaM.prototype.onStop = async function () {
   this.lifecycle++;
   this.started = false;
   this.generation++;
+  if (this.mpdUpdates) this.mpdUpdates.close();
   this.removeFromBrowseSources();
   const backend = this.backend;
   this.backend = null;
@@ -270,6 +278,14 @@ ControllerYaM.prototype.playFromBrowse = async function (data) {
   return this.browsePlayback;
 };
 
+ControllerYaM.prototype.useMpdUpdates = async function () {
+  const machine = this.commandRouter.stateMachine;
+  await machine.setConsumeUpdateService('mpd', true);
+  // Volumio initially sets consumeState.service to mpd. Keep queue navigation
+  // routed to YaM even before MPD sends the first metadata update.
+  machine.consumeState = Object.assign(machine.consumeState || {}, {service: SERVICE});
+};
+
 ControllerYaM.prototype.clearAddPlayTrack = async function (track) {
   const generation = ++this.generation;
   let stage = 'stream';
@@ -288,6 +304,7 @@ ControllerYaM.prototype.clearAddPlayTrack = async function (track) {
     this.playback = (async () => {
       await previous.catch(() => {});
       current();
+      const updateEpoch = this.mpdUpdates ? this.mpdUpdates.begin(stream.uri) : null;
       stage = 'mpd.stop';
       await this.mpdCommand('stop');
       current();
@@ -298,10 +315,15 @@ ControllerYaM.prototype.clearAddPlayTrack = async function (track) {
       await this.mpdCommand('add "' + stream.uri + '"');
       current();
       stage = 'state';
-      await this.commandRouter.stateMachine.setConsumeUpdateService('mpd', true);
+      await this.useMpdUpdates();
       current();
       stage = 'mpd.play';
       await this.mpdCommand('play');
+      current();
+      if (this.mpdUpdates) {
+        stage = 'mpd.state';
+        await this.mpdUpdates.ready(updateEpoch);
+      }
     })();
     await this.playback;
     this.note('INFO', 'play', 'Трек передан проигрывателю');
@@ -313,6 +335,7 @@ ControllerYaM.prototype.clearAddPlayTrack = async function (track) {
       }
     }
   } catch (error) {
+    if (generation === this.generation && this.mpdUpdates) this.mpdUpdates.cancel();
     // MPD errors may echo signed URLs; never forward their raw messages.
     const message = 'Не удалось запустить трек (' + stage + '): ' + error.message;
     const safe = new Error(generation === this.generation
@@ -326,12 +349,13 @@ ControllerYaM.prototype.clearAddPlayTrack = async function (track) {
 
 ControllerYaM.prototype.stop = async function () {
   this.generation++;
+  if (this.mpdUpdates) this.mpdUpdates.cancel();
   await this.playback.catch(() => {});
   if (this.mpd) await this.mpdCommand('stop');
 };
 ControllerYaM.prototype.pause = async function () { await this.mpdCommand('pause 1'); };
 ControllerYaM.prototype.resume = async function () {
-  await this.commandRouter.stateMachine.setConsumeUpdateService('mpd', true);
+  await this.useMpdUpdates();
   await this.mpdCommand('pause 0');
 };
 ControllerYaM.prototype.seek = async function (position) { return this.mpd.seek(position); };
