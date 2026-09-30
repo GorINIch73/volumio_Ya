@@ -61,6 +61,8 @@ def serve(backend, source, destination):
             response = {"id": request_id, "result": result}
         except AccountError as error:
             response = {"id": request_id, "error": str(error)}
+            if error.diagnostic:
+                response["diagnostic"] = error.diagnostic
         except Exception as error:
             # Never serialize tracebacks, tokens or remote responses.
             frame = traceback.extract_tb(error.__traceback__)[-1]

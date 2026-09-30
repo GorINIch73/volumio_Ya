@@ -14,7 +14,34 @@ from urllib.parse import urlsplit, urlencode, parse_qs
 
 
 class AccountError(Exception):
-    pass
+    def __init__(self, message, diagnostic=None):
+        super().__init__(message)
+        self.diagnostic = diagnostic
+
+
+def api_error_summary(raw):
+    """Extract only short, non-secret error fields from a Yandex response."""
+    try:
+        value = json.loads(raw)
+    except (ValueError, TypeError):
+        return ""
+    if not isinstance(value, dict):
+        return ""
+    error = value.get("error") or value.get("Error")
+    if isinstance(error, dict):
+        parts = [error.get(key) for key in ("name", "code", "status", "message")]
+    else:
+        parts = [error, value.get("message")]
+    safe = []
+    for part in parts:
+        if not isinstance(part, (str, int)):
+            continue
+        text = re.sub(r"[\r\n\t]+", " ", str(part)).strip()
+        text = re.sub(r"(?i)(oauth\s+)[^\s,;]+", r"\1[redacted]", text)
+        text = re.sub(r"https?://\S+", "[url]", text)
+        if text and text not in safe:
+            safe.append(text[:120])
+    return "; ".join(safe[:3])
 
 
 def has_plus_subscription(result, account):
@@ -170,28 +197,38 @@ def music_id(value):
 
 def json_request(host, path, *, token=None, payload=None):
     connection = http.client.HTTPSConnection(host, timeout=10)
-    headers = {"Accept": "application/json"}
+    # Match the reference plugin's axios-based Yandex client request headers.
+    headers = {"Accept": "application/json, text/plain, */*"}
     if token:
         headers.update({"Authorization": "OAuth " + token,
-                        "X-Yandex-Music-Client": "YandexMusicDesktopAppWindows/5.25.1"})
+                        "X-Yandex-Music-Client": "YandexMusicDesktopAppWindows/5.25.1",
+                        "Accept-Language": "ru",
+                        "User-Agent": "axios/0.27.2"})
     if payload is not None:
         headers["Content-Type"] = "application/x-www-form-urlencoded"
     try:
         body = urlencode(payload) if payload is not None else None
         connection.request("POST" if payload is not None else "GET", path, body=body, headers=headers)
         response = connection.getresponse()
-        if response.status in (401, 403):
-            raise AccountError("Яндекс отклонил запрос. Проверьте токен и подписку")
-        if response.status == 429:
-            raise AccountError("Слишком много запросов к Яндексу. Попробуйте позже")
-        if response.status != 200:
-            raise AccountError("Яндекс не смог выполнить запрос")
         raw = response.read(8 * 1024 * 1024 + 1)
         if len(raw) > 8 * 1024 * 1024:
             raise ValueError()
+        endpoint = path.split("?", 1)[0]
+        detail = api_error_summary(raw)
+        diagnostic = "HTTP " + str(response.status) + " " + endpoint
+        if endpoint == "/get-file-info":
+            diagnostic += "; client=YandexMusicDesktopAppWindows/5.25.1; ua=axios/0.27.2"
+        if detail:
+            diagnostic += "; API: " + detail
+        if response.status in (401, 403):
+            raise AccountError("Яндекс отклонил запрос. Проверьте токен и подписку", diagnostic)
+        if response.status == 429:
+            raise AccountError("Слишком много запросов к Яндексу. Попробуйте позже", diagnostic)
+        if response.status != 200:
+            raise AccountError("Яндекс не смог выполнить запрос", diagnostic)
         value = json.loads(raw)
         if isinstance(value, dict) and ("error" in value or "Error" in value or value.get("success") is False):
-            raise AccountError("Яндекс отклонил запрос")
+            raise AccountError("Яндекс отклонил запрос", diagnostic)
         return value
     except TimeoutError:
         raise AccountError("Яндекс Музыка не ответила за 10 секунд. Попробуйте позже") from None
@@ -465,6 +502,9 @@ class Music:
                 # Keep playback available when lossless is absent for this track
                 # or the account/API does not return an unencrypted raw stream.
                 lossless_result = "Ошибка Lossless API: " + str(error)
+                if error.diagnostic:
+                    lossless_result += (" (" + error.diagnostic +
+                                        "; quality=lossless; codecs=flac,mp3,flac-mp4; transports=raw)")
         options = self.yandex(token, f"/tracks/{identifier}/download-info")
         options = [o for o in options if o.get("codec") == "mp3" and not o.get("preview")]
         if not options:

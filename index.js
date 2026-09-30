@@ -300,6 +300,9 @@ ControllerYaM.prototype.clearAddPlayTrack = async function (track) {
     this.note('INFO', 'play.stream', 'Получение ссылки на аудио');
     const stream = await this.request('stream', {id: identifier(track)});
     current();
+    if (stream.lossless_result) {
+      this.note('ERROR', 'play.lossless', stream.lossless_result);
+    }
     const streamInfo = stream.codec === 'flac' ? 'FLAC, lossless' :
       (stream.codec === 'mp3' ? 'MP3' + (stream.bitrate_kbps ? ', ' + stream.bitrate_kbps + ' кбит/с' : '') +
         (stream.lossless_result ? ' — ' + stream.lossless_result : '') : 'Формат неизвестен');
