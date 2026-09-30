@@ -19,7 +19,7 @@ class AccountError(Exception):
         self.diagnostic = diagnostic
 
 
-FILE_INFO_CLIENT_ID = "YandexMusicAndroid/24023621"
+FILE_INFO_CLIENT_ID = "YandexMusicDesktopAppWindows/5.25.1"
 
 
 def api_error_summary(raw):
@@ -30,11 +30,18 @@ def api_error_summary(raw):
         return ""
     if not isinstance(value, dict):
         return ""
+    result = value.get("result") if isinstance(value.get("result"), dict) else {}
+    invocation = value.get("invocationInfo") if isinstance(value.get("invocationInfo"), dict) else {}
     error = value.get("error") or value.get("Error")
     if isinstance(error, dict):
         parts = [error.get(key) for key in ("name", "code", "status", "message")]
     else:
-        parts = [error, value.get("message")]
+        # get-file-info errors are commonly wrapped as
+        # result.name/result.message instead of top-level error/message.
+        parts = [result.get("name"), result.get("message"), error, value.get("message")]
+    request_id = result.get("requestId") or result.get("request-id") or invocation.get("req-id")
+    if isinstance(request_id, str) and re.fullmatch(r"[A-Za-z0-9-]{8,100}", request_id):
+        parts.append("requestId=" + request_id)
     safe = []
     for part in parts:
         if not isinstance(part, (str, int)):
