@@ -17,6 +17,26 @@ class AccountError(Exception):
     pass
 
 
+def has_plus_subscription(result, account):
+    # Yandex has returned this flag under different wrappers over time
+    # (result.plus, result.subscription, or account.plus). Search the
+    # account-status payload recursively, but only interpret explicit flags.
+    pending = [result, account]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, dict):
+            for key in ("hasPlus", "has_plus"):
+                if key in value:
+                    active = value[key]
+                    if isinstance(active, str):
+                        return active.strip().lower() in ("true", "1", "yes")
+                    return active is True or active == 1
+            pending.extend(value.values())
+        elif isinstance(value, list):
+            pending.extend(value)
+    return None
+
+
 def validate_yandex_token(token):
     """Use the same OAuth header/account endpoint as the achechulin plugin."""
     connection = http.client.HTTPSConnection("api.music.yandex.net", timeout=10)
@@ -43,7 +63,7 @@ def validate_yandex_token(token):
             raise AccountError("Токен не даёт доступа к аккаунту Яндекс Музыки")
         return {"uid": str(uid), "login": str(account.get("login") or ""),
                 "display_name": str(account.get("displayName") or account.get("fullName") or account.get("login") or uid),
-                "plus_active": bool((result.get("plus") or {}).get("hasPlus"))}
+                "plus_active": has_plus_subscription(result, account)}
     except AccountError:
         raise
     except (OSError, http.client.HTTPException):
@@ -197,10 +217,6 @@ class Music:
     def set_quality(self, value):
         if value not in ("standard", "high", "lossless"):
             raise AccountError("Выберите обычное, максимальное или Lossless качество")
-        if value == "lossless":
-            account = self.account.status().get("account") or {}
-            if not account.get("plus_active"):
-                raise AccountError("Lossless доступен при активной подписке Яндекс Плюс")
         path = self.account.data / "audio-quality.json"
         temp = path.with_suffix(".tmp")
         try:

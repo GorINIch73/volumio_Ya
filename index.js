@@ -401,11 +401,10 @@ ControllerYaM.prototype.getUIConfig = async function () {
     }
   } else ui.sections[0].label = 'Сначала включите плагин';
   const selector = ui.sections.find(section => section.id === 'audio_quality').content[0];
-  if (!plusActive) selector.options = selector.options.filter(option => option.value !== 'lossless');
   if (this.started) {
     try {
       const quality = await this.request('quality');
-      selector.value = quality.quality === 'lossless' && !plusActive ? 'high' : quality.quality;
+      selector.value = quality.quality;
     } catch (_) {}
   }
   const diagnostics = ui.sections.find(section => section.id === 'diagnostics');
