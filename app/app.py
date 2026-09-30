@@ -517,6 +517,7 @@ class Music:
 
     def stream(self, token, identifier, quality="high"):
         lossless_result = ""
+        lossless_debug = ""
         if quality == "lossless":
             try:
                 result = self.lossless_stream(token, identifier)
@@ -531,6 +532,7 @@ class Music:
                 # or the account/API does not return an unencrypted raw stream.
                 lossless_result = "Ошибка Lossless API: " + str(error)
                 if error.diagnostic:
+                    lossless_debug = error.diagnostic
                     lossless_result += (" (" + error.diagnostic +
                                         "; quality=lossless; codecs=flac,mp3,flac-mp4; transports=raw)")
         options = self.yandex(token, f"/tracks/{identifier}/download-info")
@@ -556,4 +558,5 @@ class Music:
         signature = hashlib.md5(("XGRlBW9FXlekgbPrRHuSiA" + path[1:] + salt).encode()).hexdigest()
         return {"uri": f"https://{host}/get-mp3/{signature}/{stamp}{path}",
                 "codec": "mp3", "bitrate_kbps": int(option.get("bitrateInKbps", 0)),
-                "transport": "raw", "lossless_result": lossless_result}
+                "transport": "raw", "lossless_result": lossless_result,
+                "lossless_debug": lossless_debug}

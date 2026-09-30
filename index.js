@@ -131,9 +131,6 @@ ControllerYaM.prototype.onRestart = async function () {
 ControllerYaM.prototype.request = function (method, params) {
   if (!this.started || !this.backend) return Promise.reject(new Error('Включите плагин Яндекс Музыки'));
   return this.backend.request(method, params).catch(error => {
-    if (error.diagnostic && error.diagnostic.includes('; Authorization=OAuth ')) {
-      this.logger.info('YaM temporary full /get-file-info request: ' + error.diagnostic);
-    }
     error.message = this.note('ERROR', 'yandex.' + method,
       error.message + (error.diagnostic ? ' (' + error.diagnostic + ')' : ''));
     error.logged = true;
@@ -306,6 +303,9 @@ ControllerYaM.prototype.clearAddPlayTrack = async function (track) {
     current();
     if (stream.lossless_result) {
       this.note('ERROR', 'play.lossless', stream.lossless_result);
+    }
+    if (stream.lossless_debug) {
+      this.logger.info('YaM temporary full /get-file-info request: ' + stream.lossless_debug);
     }
     const streamInfo = stream.codec === 'flac' ? 'FLAC, lossless' :
       (stream.codec === 'mp3' ? 'MP3' + (stream.bitrate_kbps ? ', ' + stream.bitrate_kbps + ' кбит/с' : '') +
