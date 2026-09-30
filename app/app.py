@@ -19,6 +19,9 @@ class AccountError(Exception):
         self.diagnostic = diagnostic
 
 
+FILE_INFO_CLIENT_ID = "YandexMusicAndroid/24023621"
+
+
 def api_error_summary(raw):
     """Extract only short, non-secret error fields from a Yandex response."""
     try:
@@ -195,13 +198,13 @@ def music_id(value):
     return value
 
 
-def json_request(host, path, *, token=None, payload=None):
+def json_request(host, path, *, token=None, payload=None, client_id="YandexMusicDesktopAppWindows/5.25.1"):
     connection = http.client.HTTPSConnection(host, timeout=10)
     # Match the reference plugin's axios-based Yandex client request headers.
     headers = {"Accept": "application/json, text/plain, */*"}
     if token:
         headers.update({"Authorization": "OAuth " + token,
-                        "X-Yandex-Music-Client": "YandexMusicDesktopAppWindows/5.25.1",
+                        "X-Yandex-Music-Client": client_id,
                         "Accept-Language": "ru",
                         "User-Agent": "axios/0.27.2"})
     if payload is not None:
@@ -217,7 +220,7 @@ def json_request(host, path, *, token=None, payload=None):
         detail = api_error_summary(raw)
         diagnostic = "HTTP " + str(response.status) + " " + endpoint
         if endpoint == "/get-file-info":
-            diagnostic += "; client=YandexMusicDesktopAppWindows/5.25.1; ua=axios/0.27.2"
+            diagnostic += "; client=" + client_id + "; ua=axios/0.27.2"
         if detail:
             diagnostic += "; API: " + detail
         if response.status in (401, 403):
@@ -289,8 +292,9 @@ class Music:
         return value["token"], music_id(value["account"]["uid"])
 
     @staticmethod
-    def yandex(token, path, payload=None):
-        value = json_request("api.music.yandex.net", path, token=token, payload=payload)
+    def yandex(token, path, payload=None, client_id="YandexMusicDesktopAppWindows/5.25.1"):
+        value = json_request("api.music.yandex.net", path, token=token, payload=payload,
+                             client_id=client_id)
         if not isinstance(value, dict) or "result" not in value:
             raise AccountError("Некорректный ответ Яндекс Музыки")
         return value["result"]
@@ -469,7 +473,7 @@ class Music:
         signature = base64.b64encode(hmac.new(secret, message.encode(), hashlib.sha256).digest()).decode().rstrip("=")
         query = urlencode({"ts": timestamp, "trackId": identifier, "quality": "lossless",
                            "codecs": codecs, "transports": "raw", "sign": signature})
-        result = self.yandex(token, "/get-file-info?" + query)
+        result = self.yandex(token, "/get-file-info?" + query, client_id=FILE_INFO_CLIENT_ID)
         info = result.get("downloadInfo") if isinstance(result, dict) else None
         if not isinstance(info, dict):
             return None
