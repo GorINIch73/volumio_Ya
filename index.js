@@ -158,8 +158,9 @@ function trackItem(track, type) {
 
 function identifier(data) {
   const uri = typeof data === 'string' ? data : data && data.uri;
-  const match = typeof uri === 'string' && /^yam\/track\/([0-9]{1,24}(?::[0-9]{1,24})?)$/.exec(uri);
-  if (!match) throw new Error('Некорректный адрес трека');
+  const normalized = typeof uri === 'string' ? uri.replace(/^\/+/, '') : '';
+  const match = /^yam\/track\/([0-9]{1,24}(?::[0-9]{1,24})?)$/.exec(normalized);
+  if (!match) throw new Error('Некорректный адрес трека: ' + String(uri).slice(0, 160));
   return match[1];
 }
 

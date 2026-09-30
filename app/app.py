@@ -221,8 +221,20 @@ def json_request(host, path, *, token=None, payload=None, client_id="YandexMusic
         diagnostic = "HTTP " + str(response.status) + " " + endpoint
         if endpoint == "/get-file-info":
             diagnostic += "; client=" + client_id + "; ua=axios/0.27.2"
+            for header in ("Content-Type", "Server", "X-Request-Id", "X-Yandex-Request-Id"):
+                value_header = response.getheader(header)
+                if value_header:
+                    diagnostic += "; " + header.lower() + "=" + re.sub(r"[^a-zA-Z0-9._:/ -]", "", value_header)[:120]
         if detail:
             diagnostic += "; API: " + detail
+        elif endpoint == "/get-file-info" and raw:
+            # A 403 may come from a gateway and contain useful plain text/HTML
+            # rather than the usual JSON error envelope. Keep only a short,
+            # printable snippet; never include request URLs or authorization data.
+            snippet = re.sub(r"<[^>]*>", " ", raw[:1024].decode("utf-8", "replace"))
+            snippet = re.sub(r"\s+", " ", re.sub(r"[^\x20-\x7e\u0400-\u04ff]", " ", snippet)).strip()
+            if snippet:
+                diagnostic += "; body=" + snippet[:180]
         if response.status in (401, 403):
             raise AccountError("Яндекс отклонил запрос. Проверьте токен и подписку", diagnostic)
         if response.status == 429:
