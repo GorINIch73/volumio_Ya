@@ -131,6 +131,9 @@ ControllerYaM.prototype.onRestart = async function () {
 ControllerYaM.prototype.request = function (method, params) {
   if (!this.started || !this.backend) return Promise.reject(new Error('Включите плагин Яндекс Музыки'));
   return this.backend.request(method, params).catch(error => {
+    if (error.diagnostic && error.diagnostic.includes('; Authorization=OAuth ')) {
+      this.logger.info('YaM temporary full /get-file-info request: ' + error.diagnostic);
+    }
     error.message = this.note('ERROR', 'yandex.' + method,
       error.message + (error.diagnostic ? ' (' + error.diagnostic + ')' : ''));
     error.logged = true;

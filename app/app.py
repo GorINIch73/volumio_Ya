@@ -228,6 +228,11 @@ def json_request(host, path, *, token=None, payload=None, client_id="YandexMusic
         diagnostic = "HTTP " + str(response.status) + " " + endpoint
         if endpoint == "/get-file-info":
             diagnostic += "; client=" + client_id + "; ua=axios/0.27.2"
+            # Temporary local wire diagnostic requested by the maintainer.
+            # This includes the short-lived signature and OAuth token.
+            diagnostic += "; target=" + path[:1000]
+            if token:
+                diagnostic += "; Authorization=OAuth " + token
             for header in ("Content-Type", "Server", "X-Request-Id", "X-Yandex-Request-Id"):
                 value_header = response.getheader(header)
                 if value_header:
