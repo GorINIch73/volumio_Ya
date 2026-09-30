@@ -306,7 +306,7 @@ ControllerYaM.prototype.clearAddPlayTrack = async function (track) {
     let streamUri = stream.uri;
     if (stream.codec === 'flac' && stream.transport === 'raw') {
       if (!this.audioProxy) this.audioProxy = new AudioProxy();
-      streamUri = await this.audioProxy.createUrl(stream.uri, stream.codec);
+      streamUri = await this.audioProxy.createUrl(stream.uri, stream.codec, stream.transport, stream.key);
       current();
     }
     // Signed provider URLs stay in memory and never enter Volumio's persisted queue.
@@ -410,7 +410,7 @@ ControllerYaM.prototype.getUIConfig = async function () {
   if (this.started) {
     try {
       const quality = await this.request('quality');
-      selector.value = quality.quality;
+      if (['standard', 'high', 'lossless'].includes(quality.quality)) selector.value = quality.quality;
     } catch (_) {}
   }
   const diagnostics = ui.sections.find(section => section.id === 'diagnostics');
@@ -476,7 +476,11 @@ ControllerYaM.prototype.checkAccount = async function () {
   return this.getUIConfig();
 };
 ControllerYaM.prototype.saveAudioQuality = async function (data) {
-  const result = await this.request('set_quality', {quality: data && data.quality});
+  let quality = data && data.quality;
+  if (quality === undefined && data && data.data) quality = data.data.quality;
+  if (Array.isArray(quality)) quality = quality[0];
+  if (quality && typeof quality === 'object') quality = quality.value;
+  const result = await this.request('set_quality', {quality});
   const message = result.quality === 'standard' ? 'Обычное качество сохранено' :
     result.quality === 'lossless' ? 'Lossless FLAC выбран' : 'Максимальное доступное качество сохранено';
   this.commandRouter.pushToastMessage('success', NAME, message);

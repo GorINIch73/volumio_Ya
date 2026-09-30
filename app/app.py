@@ -438,14 +438,17 @@ class Music:
             return None
         codec = str(info.get("codec") or "unknown")
         transport = str(info.get("transport") or "unknown")
-        if codec != "flac" or transport != "raw":
+        if codec != "flac" or transport not in ("raw", "encraw"):
+            return {"codec": codec, "transport": transport, "unavailable": True}
+        key = info.get("key") if transport == "encraw" else None
+        if transport == "encraw" and (not isinstance(key, str) or not re.fullmatch(r"[0-9a-fA-F]{32}", key)):
             return {"codec": codec, "transport": transport, "unavailable": True}
         url = info.get("url")
         parsed = urlsplit(url or "")
         if (parsed.scheme != "https" or not self.media_host(parsed.hostname)
                 or parsed.port not in (None, 443) or parsed.username or parsed.password):
             raise AccountError("Некорректный адрес FLAC-потока")
-        return {"uri": url, "codec": "flac", "transport": "raw"}
+        return {"uri": url, "codec": "flac", "transport": transport, "key": key}
 
     def stream(self, token, identifier, quality="high"):
         lossless_result = ""
