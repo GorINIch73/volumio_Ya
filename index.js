@@ -301,7 +301,8 @@ ControllerYaM.prototype.clearAddPlayTrack = async function (track) {
     const stream = await this.request('stream', {id: identifier(track)});
     current();
     const streamInfo = stream.codec === 'flac' ? 'FLAC, lossless' :
-      (stream.codec === 'mp3' ? 'MP3' + (stream.bitrate_kbps ? ', ' + stream.bitrate_kbps + ' кбит/с' : '') : 'Формат неизвестен');
+      (stream.codec === 'mp3' ? 'MP3' + (stream.bitrate_kbps ? ', ' + stream.bitrate_kbps + ' кбит/с' : '') +
+        (stream.lossless_result ? ' — ' + stream.lossless_result : '') : 'Формат неизвестен');
     let streamUri = stream.uri;
     if (stream.codec === 'flac' && stream.transport === 'raw') {
       if (!this.audioProxy) this.audioProxy = new AudioProxy();

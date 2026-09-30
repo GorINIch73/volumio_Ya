@@ -434,8 +434,12 @@ class Music:
                            "codecs": codecs, "transports": "raw", "sign": signature})
         result = self.yandex(token, "/get-file-info?" + query)
         info = result.get("downloadInfo") if isinstance(result, dict) else None
-        if not isinstance(info, dict) or info.get("codec") != "flac" or info.get("transport") != "raw":
+        if not isinstance(info, dict):
             return None
+        codec = str(info.get("codec") or "unknown")
+        transport = str(info.get("transport") or "unknown")
+        if codec != "flac" or transport != "raw":
+            return {"codec": codec, "transport": transport, "unavailable": True}
         url = info.get("url")
         parsed = urlsplit(url or "")
         if (parsed.scheme != "https" or not self.media_host(parsed.hostname)
@@ -444,15 +448,20 @@ class Music:
         return {"uri": url, "codec": "flac", "transport": "raw"}
 
     def stream(self, token, identifier, quality="high"):
+        lossless_result = ""
         if quality == "lossless":
             try:
                 result = self.lossless_stream(token, identifier)
-                if result:
+                if result and not result.get("unavailable"):
                     return result
-            except AccountError:
+                if result:
+                    lossless_result = "Lossless API: " + result["codec"] + "/" + result["transport"]
+                else:
+                    lossless_result = "Lossless API не вернул данные потока"
+            except AccountError as error:
                 # Keep playback available when lossless is absent for this track
                 # or the account/API does not return an unencrypted raw stream.
-                pass
+                lossless_result = "Ошибка Lossless API: " + str(error)
         options = self.yandex(token, f"/tracks/{identifier}/download-info")
         options = [o for o in options if o.get("codec") == "mp3" and not o.get("preview")]
         if not options:
@@ -476,4 +485,4 @@ class Music:
         signature = hashlib.md5(("XGRlBW9FXlekgbPrRHuSiA" + path[1:] + salt).encode()).hexdigest()
         return {"uri": f"https://{host}/get-mp3/{signature}/{stamp}{path}",
                 "codec": "mp3", "bitrate_kbps": int(option.get("bitrateInKbps", 0)),
-                "transport": "raw"}
+                "transport": "raw", "lossless_result": lossless_result}
