@@ -491,7 +491,7 @@ class Music:
         secret = b"kzqU4XhfCaY6B6JTHODeq5"
         signature = base64.b64encode(hmac.new(secret, message.encode(), hashlib.sha256).digest()).decode().rstrip("=")
         query = urlencode({"ts": timestamp, "trackId": identifier, "quality": "lossless",
-                           "codecs": codecs, "transports": "raw", "sign": signature})
+                           "codecs": codecs, "transports": "raw", "sign": signature}, safe=",")
         result = self.yandex(token, "/get-file-info?" + query, client_id=FILE_INFO_CLIENT_ID)
         info = result.get("downloadInfo") if isinstance(result, dict) else None
         if not isinstance(info, dict):
