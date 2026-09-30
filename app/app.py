@@ -105,6 +105,14 @@ class YandexAccount:
 
     def save(self, token):
         account = self.validator(token)
+        previous = self.read()
+        old_account = previous.get("account") or {}
+        # Keep the last confirmed subscription state if this response omits
+        # the Plus block. Do not carry it over when switching accounts.
+        if (account.get("plus_active") is None and
+                account.get("uid") == old_account.get("uid") and
+                isinstance(old_account.get("plus_active"), bool)):
+            account["plus_active"] = old_account["plus_active"]
         value = {"token": token, "account": account,
                  "checked_at": datetime.now(timezone.utc).isoformat()}
         temp = self.path.with_suffix(".tmp")
@@ -210,9 +218,13 @@ class Music:
             return value
         try:
             account = self.account.status().get("account") or {}
-            return "lossless" if account.get("plus_active") else "high"
+            if isinstance(account.get("plus_active"), bool):
+                value = "lossless" if account["plus_active"] else "high"
+                self.set_quality(value)
+                return value
         except AccountError:
-            return "high"
+            pass
+        return "high"
 
     def set_quality(self, value):
         if value not in ("standard", "high", "lossless"):

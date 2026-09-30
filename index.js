@@ -317,7 +317,7 @@ ControllerYaM.prototype.clearAddPlayTrack = async function (track) {
     this.playback = (async () => {
       await previous.catch(() => {});
       current();
-      const updateEpoch = this.mpdUpdates ? this.mpdUpdates.begin(streamUri) : null;
+      const updateEpoch = this.mpdUpdates ? this.mpdUpdates.begin(streamUri, stream.codec) : null;
       stage = 'mpd.stop';
       await this.mpdCommand('stop');
       current();
