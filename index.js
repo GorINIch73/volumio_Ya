@@ -22,6 +22,7 @@ function ControllerYaM(context) {
   this.playback = Promise.resolve();
   this.browsePlayback = Promise.resolve();
   this.trackCache = new Map();
+  this.currentStreamInfo = '';
   this.journal = null;
   this.updater = null;
   this.audioProxy = null;
@@ -152,8 +153,7 @@ function folder(title, uri, icon, albumart) {
 function trackItem(track, type) {
   return {service: SERVICE, type: type || 'song', uri: SERVICE + '/track/' + track.id,
     title: track.title, name: track.title, artist: track.artist, album: track.album,
-    duration: track.duration, albumart: track.albumart || '/albumart',
-    trackType: 'mp3', icon: 'fa fa-music'};
+    duration: track.duration, albumart: track.albumart || '/albumart', icon: 'fa fa-music'};
 }
 
 function identifier(data) {
@@ -300,6 +300,8 @@ ControllerYaM.prototype.clearAddPlayTrack = async function (track) {
     this.note('INFO', 'play.stream', 'Получение ссылки на аудио');
     const stream = await this.request('stream', {id: identifier(track)});
     current();
+    const streamInfo = stream.codec === 'flac' ? 'FLAC, lossless' :
+      (stream.codec === 'mp3' ? 'MP3' + (stream.bitrate_kbps ? ', ' + stream.bitrate_kbps + ' кбит/с' : '') : 'Формат неизвестен');
     let streamUri = stream.uri;
     if (stream.codec === 'flac' && stream.transport === 'raw') {
       if (!this.audioProxy) this.audioProxy = new AudioProxy();
@@ -337,6 +339,7 @@ ControllerYaM.prototype.clearAddPlayTrack = async function (track) {
       }
     })();
     await this.playback;
+    if (generation === this.generation) this.currentStreamInfo = streamInfo;
     this.note('INFO', 'play', 'Трек передан проигрывателю');
     if (generation === this.generation) {
       try {
@@ -401,6 +404,8 @@ ControllerYaM.prototype.getUIConfig = async function () {
     }
   } else ui.sections[0].label = 'Сначала включите плагин';
   const selector = ui.sections.find(section => section.id === 'audio_quality').content[0];
+  const actualQuality = ui.sections.find(section => section.id === 'audio_quality').content.find(item => item.id === 'actual_quality');
+  if (actualQuality) actualQuality.value = this.currentStreamInfo || 'Трек ещё не запускался';
   if (this.started) {
     try {
       const quality = await this.request('quality');

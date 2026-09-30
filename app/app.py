@@ -462,4 +462,6 @@ class Music:
         if not self.media_host(host) or not re.fullmatch(r"/[A-Za-z0-9/_.%-]+", path) or not re.fullmatch(r"[0-9a-fA-F]+", str(stamp)):
             raise AccountError("Некорректный адрес аудиофайла")
         signature = hashlib.md5(("XGRlBW9FXlekgbPrRHuSiA" + path[1:] + salt).encode()).hexdigest()
-        return f"https://{host}/get-mp3/{signature}/{stamp}{path}"
+        return {"uri": f"https://{host}/get-mp3/{signature}/{stamp}{path}",
+                "codec": "mp3", "bitrate_kbps": int(option.get("bitrateInKbps", 0)),
+                "transport": "raw"}

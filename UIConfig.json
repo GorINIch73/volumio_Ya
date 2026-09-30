@@ -123,6 +123,18 @@
               "label": "Lossless (FLAC, если доступен)"
             }
           ]
+        },
+        {
+          "id": "actual_quality",
+          "element": "input",
+          "type": "text",
+          "label": "Формат последнего потока",
+          "value": "Трек ещё не запускался",
+          "attributes": [
+            {
+              "readonly": "readonly"
+            }
+          ]
         }
       ]
     },
