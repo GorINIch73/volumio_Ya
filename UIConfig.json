@@ -108,7 +108,10 @@
           "id": "quality",
           "element": "select",
           "label": "Качество потока",
-          "value": "high",
+          "value": {
+            "value": "high",
+            "label": "Максимум доступного (MP3)"
+          },
           "options": [
             {
               "value": "standard",

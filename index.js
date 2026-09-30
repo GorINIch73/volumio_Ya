@@ -410,7 +410,8 @@ ControllerYaM.prototype.getUIConfig = async function () {
   if (this.started) {
     try {
       const quality = await this.request('quality');
-      if (['standard', 'high', 'lossless'].includes(quality.quality)) selector.value = quality.quality;
+      const option = selector.options.find(item => item.value === quality.quality);
+      if (option) selector.value = {value: option.value, label: option.label};
     } catch (_) {}
   }
   const diagnostics = ui.sections.find(section => section.id === 'diagnostics');
