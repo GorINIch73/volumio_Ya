@@ -6,6 +6,7 @@ import hmac
 import base64
 import http.client
 import re
+import subprocess
 import threading
 import time
 from datetime import datetime, timezone
@@ -20,6 +21,41 @@ class AccountError(Exception):
 
 
 FILE_INFO_CLIENT_ID = "YandexMusicDesktopAppWindows/5.25.1"
+
+
+class BufferedResponse:
+    def __init__(self, status, headers, body):
+        self.status = status
+        self.headers = {str(key).lower(): str(value) for key, value in headers.items()}
+        self.body = body
+
+    def read(self, _limit=None):
+        return self.body
+
+    def getheader(self, name):
+        return self.headers.get(name.lower())
+
+
+def node_file_info(host, path, token, client_id):
+    helper = Path(__file__).resolve().parents[1] / "lib" / "yandex-file-info.js"
+    request = json.dumps({"host": host, "path": path, "token": token, "clientId": client_id})
+    try:
+        completed = subprocess.run(["node", str(helper)], input=request, text=True,
+                                   capture_output=True, timeout=12, check=False)
+    except subprocess.TimeoutExpired:
+        raise TimeoutError() from None
+    if completed.returncode != 0:
+        raise OSError("Node/Axios request failed") from None
+    try:
+        value = json.loads(completed.stdout)
+        status = int(value["status"])
+        headers = value.get("headers") or {}
+        body = str(value.get("body") or "").encode("utf-8")
+        if len(body) > 8 * 1024 * 1024:
+            raise ValueError()
+        return BufferedResponse(status, headers, body)
+    except (ValueError, TypeError, KeyError):
+        raise OSError("Invalid Node/Axios response") from None
 
 
 def api_error_summary(raw):
@@ -206,7 +242,8 @@ def music_id(value):
 
 
 def json_request(host, path, *, token=None, payload=None, client_id="YandexMusicDesktopAppWindows/5.25.1"):
-    connection = http.client.HTTPSConnection(host, timeout=10)
+    endpoint = path.split("?", 1)[0]
+    connection = None
     # Match the reference plugin's axios-based Yandex client request headers.
     headers = {"Accept": "application/json, text/plain, */*"}
     if token:
@@ -217,22 +254,22 @@ def json_request(host, path, *, token=None, payload=None, client_id="YandexMusic
     if payload is not None:
         headers["Content-Type"] = "application/x-www-form-urlencoded"
     try:
-        body = urlencode(payload) if payload is not None else None
-        connection.request("POST" if payload is not None else "GET", path, body=body, headers=headers)
-        response = connection.getresponse()
+        if endpoint == "/get-file-info" and token:
+            response = node_file_info(host, path, token, client_id)
+        else:
+            connection = http.client.HTTPSConnection(host, timeout=10)
+            body = urlencode(payload) if payload is not None else None
+            connection.request("POST" if payload is not None else "GET", path, body=body, headers=headers)
+            response = connection.getresponse()
         raw = response.read(8 * 1024 * 1024 + 1)
         if len(raw) > 8 * 1024 * 1024:
             raise ValueError()
-        endpoint = path.split("?", 1)[0]
         detail = api_error_summary(raw)
         diagnostic = "HTTP " + str(response.status) + " " + endpoint
         if endpoint == "/get-file-info":
-            diagnostic += "; client=" + client_id + "; ua=axios/0.27.2"
-            # Temporary local wire diagnostic requested by the maintainer.
-            # This includes the short-lived signature and OAuth token.
+            diagnostic += "; transport=node-https; client=" + client_id
+            # Keep the temporary signed target for request comparison. Never log credentials.
             diagnostic += "; target=" + path[:1000]
-            if token:
-                diagnostic += "; Authorization=OAuth " + token
             for header in ("Content-Type", "Server", "X-Request-Id", "X-Yandex-Request-Id"):
                 value_header = response.getheader(header)
                 if value_header:
@@ -264,7 +301,8 @@ def json_request(host, path, *, token=None, payload=None, client_id="YandexMusic
     except (ValueError, TypeError):
         raise AccountError("Некорректный ответ музыкального сервиса") from None
     finally:
-        connection.close()
+        if connection:
+            connection.close()
 
 
 class Music:
