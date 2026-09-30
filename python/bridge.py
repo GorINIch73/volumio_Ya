@@ -21,12 +21,16 @@ class Backend:
             return {"ready": True}
         if method == "status":
             return self.account.status()
+        if method == "quality":
+            return {"quality": self.music.quality()}
         if method == "login":
             return self.account.login(params.get("token"))
         if method == "check":
             return self.account.check()
         if method == "logout":
             return self.account.logout()
+        if method == "set_quality":
+            return self.music.set_quality(params.get("quality"))
         if method == "catalog":
             return self.music.catalog()
         if method == "library":
@@ -36,7 +40,8 @@ class Backend:
             token, _ = self.music.session()
             identifier = music_id(params.get("id"))
             if method == "stream":
-                return {"uri": self.music.stream(token, identifier)}
+                stream = self.music.stream(token, identifier, self.music.quality())
+                return stream if isinstance(stream, dict) else {"uri": stream, "codec": "mp3", "transport": "raw"}
             values = self.music.yandex(token, "/tracks", {"track-ids": identifier})
             if not values or values[0].get("available") is False:
                 raise AccountError("Трек недоступен")

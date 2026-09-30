@@ -1,6 +1,6 @@
 {
   "name": "yam",
-  "version": "0.4.9",
+  "version": "0.4.11",
   "description": "Yandex Music library and playback for Volumio",
   "main": "index.js",
   "author": "GorINIch73",
@@ -28,7 +28,7 @@
       "bookworm"
     ],
     "details": "Личная библиотека Яндекс Музыки в интерфейсе Volumio",
-    "changelog": "Исправлено переключение треков: источник YaM до первого обновления MPD и передача списка при запуске с плитки"
+    "changelog": "Добавлены данные аккаунта и Lossless FLAC с запасным MP3-потоком"
   },
   "dependencies": {
     "kew": "0.7.0"

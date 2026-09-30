@@ -29,6 +29,42 @@
           "doc": "Введите OAuth-токен без префикса OAuth. Сохранённый токен не отображается."
         },
         {
+          "id": "account_name",
+          "element": "input",
+          "type": "text",
+          "label": "Имя аккаунта",
+          "value": "",
+          "attributes": [
+            {
+              "readonly": "readonly"
+            }
+          ]
+        },
+        {
+          "id": "account_login",
+          "element": "input",
+          "type": "text",
+          "label": "Логин",
+          "value": "",
+          "attributes": [
+            {
+              "readonly": "readonly"
+            }
+          ]
+        },
+        {
+          "id": "account_plus",
+          "element": "input",
+          "type": "text",
+          "label": "Подписка Яндекс Плюс",
+          "value": "Не проверена",
+          "attributes": [
+            {
+              "readonly": "readonly"
+            }
+          ]
+        },
+        {
           "id": "check",
           "element": "button",
           "label": "Проверить аккаунт",
@@ -47,6 +83,46 @@
             "endpoint": "music_service/yam",
             "method": "logoutAccount"
           }
+        }
+      ]
+    },
+    {
+      "id": "audio_quality",
+      "element": "section",
+      "label": "Качество звука",
+      "icon": "fa-volume-up",
+      "description": "Lossless запрашивает FLAC через API Яндекса и использует его, если доступен незашифрованный raw-поток; иначе YaM автоматически включает лучший MP3. С Яндекс Плюс Lossless выбран по умолчанию. Настройка действует на следующие запуски треков.",
+      "onSave": {
+        "type": "controller",
+        "endpoint": "music_service/yam",
+        "method": "saveAudioQuality"
+      },
+      "saveButton": {
+        "label": "Сохранить качество",
+        "data": [
+          "quality"
+        ]
+      },
+      "content": [
+        {
+          "id": "quality",
+          "element": "select",
+          "label": "Качество потока",
+          "value": "high",
+          "options": [
+            {
+              "value": "standard",
+              "label": "Обычное (до 192 кбит/с)"
+            },
+            {
+              "value": "high",
+              "label": "Максимум доступного (MP3)"
+            },
+            {
+              "value": "lossless",
+              "label": "Lossless (FLAC, если доступен)"
+            }
+          ]
         }
       ]
     },

@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const libQ = require('kew');
 const Backend = require('./lib/backend');
+const AudioProxy = require('./lib/audio-proxy');
 const MpdUpdates = require('./lib/mpd-updates');
 const {Journal, redact} = require('./lib/journal');
 const Updater = require('./lib/updater');
@@ -23,6 +24,7 @@ function ControllerYaM(context) {
   this.trackCache = new Map();
   this.journal = null;
   this.updater = null;
+  this.audioProxy = null;
 }
 
 ControllerYaM.prototype.getConfigurationFiles = function () { return ['config.json']; };
@@ -104,6 +106,8 @@ ControllerYaM.prototype.onStop = async function () {
   if (this.starting) await Promise.resolve(this.starting).catch(() => {});
   await this.playback.catch(() => {});
   if (this.ownsPlayback()) await this.commandRouter.volumioStop();
+  if (this.audioProxy) await this.audioProxy.stop();
+  this.audioProxy = null;
   this.note('INFO', 'stop', 'Плагин остановлен');
 };
 
@@ -296,15 +300,22 @@ ControllerYaM.prototype.clearAddPlayTrack = async function (track) {
     this.note('INFO', 'play.stream', 'Получение ссылки на аудио');
     const stream = await this.request('stream', {id: identifier(track)});
     current();
-    // Signed URLs never enter Volumio's persisted queue or plugin logs.
-    if (!/^https:\/\/[a-zA-Z0-9.-]+\/get-mp3\/[a-zA-Z0-9/_.%-]+$/.test(stream.uri)) {
+    let streamUri = stream.uri;
+    if (stream.codec === 'flac' && stream.transport === 'raw') {
+      if (!this.audioProxy) this.audioProxy = new AudioProxy();
+      streamUri = await this.audioProxy.createUrl(stream.uri, stream.codec);
+      current();
+    }
+    // Signed provider URLs stay in memory and never enter Volumio's persisted queue.
+    if (!/^https:\/\/[a-zA-Z0-9.-]+\/get-mp3\/[a-zA-Z0-9/_.%-]+$/.test(streamUri) &&
+        !/^http:\/\/127\.0\.0\.1:6601\/[a-f0-9]{36}\.flac$/.test(streamUri)) {
       throw new Error('Некорректный адрес аудиофайла');
     }
     const previous = this.playback;
     this.playback = (async () => {
       await previous.catch(() => {});
       current();
-      const updateEpoch = this.mpdUpdates ? this.mpdUpdates.begin(stream.uri) : null;
+      const updateEpoch = this.mpdUpdates ? this.mpdUpdates.begin(streamUri) : null;
       stage = 'mpd.stop';
       await this.mpdCommand('stop');
       current();
@@ -312,7 +323,7 @@ ControllerYaM.prototype.clearAddPlayTrack = async function (track) {
       await this.mpdCommand('clear');
       current();
       stage = 'mpd.add';
-      await this.mpdCommand('add "' + stream.uri + '"');
+      await this.mpdCommand('add "' + streamUri + '"');
       current();
       stage = 'state';
       await this.useMpdUpdates();
@@ -372,14 +383,31 @@ ControllerYaM.prototype.previous = async function () {
 ControllerYaM.prototype.getUIConfig = async function () {
   if (!this.data && typeof this.commandRouter.pluginManager.getConfigurationFile === 'function') await this.onVolumioStart();
   const ui = JSON.parse(fs.readFileSync(path.join(__dirname, 'UIConfig.json'), 'utf8'));
+  let plusActive = false;
   if (this.started) {
     try {
       const status = await this.request('status');
       ui.sections[0].label = status.configured ? 'Аккаунт подключён' : 'Вход в Яндекс Музыку';
+      const account = status.account || {};
+      plusActive = account.plus_active === true;
+      const profile = ui.sections[0].content;
+      profile.find(item => item.id === 'account_name').value = account.display_name || '';
+      profile.find(item => item.id === 'account_login').value = account.login || '';
+      profile.find(item => item.id === 'account_plus').value = !status.configured ? 'Не подключён' :
+        (typeof account.plus_active !== 'boolean' ? 'Нажмите «Проверить аккаунт»' :
+          (account.plus_active ? 'Активна' : 'Не обнаружена'));
     } catch (_) {
       ui.sections[0].label = 'Не удалось прочитать аккаунт. Войдите заново.';
     }
   } else ui.sections[0].label = 'Сначала включите плагин';
+  const selector = ui.sections.find(section => section.id === 'audio_quality').content[0];
+  if (!plusActive) selector.options = selector.options.filter(option => option.value !== 'lossless');
+  if (this.started) {
+    try {
+      const quality = await this.request('quality');
+      selector.value = quality.quality === 'lossless' && !plusActive ? 'high' : quality.quality;
+    } catch (_) {}
+  }
   const diagnostics = ui.sections.find(section => section.id === 'diagnostics');
   diagnostics.content.find(item => item.id === 'last_error').value = this.journal ? this.journal.lastError() : 'Ошибок пока нет';
   const updates = ui.sections.find(section => section.id === 'updates');
@@ -440,6 +468,14 @@ ControllerYaM.prototype.saveAccount = async function (data) {
 ControllerYaM.prototype.checkAccount = async function () {
   await this.request('check');
   this.commandRouter.pushToastMessage('success', NAME, 'Аккаунт доступен');
+  return this.getUIConfig();
+};
+ControllerYaM.prototype.saveAudioQuality = async function (data) {
+  const result = await this.request('set_quality', {quality: data && data.quality});
+  const message = result.quality === 'standard' ? 'Обычное качество сохранено' :
+    result.quality === 'lossless' ? 'Lossless FLAC выбран' : 'Максимальное доступное качество сохранено';
+  this.commandRouter.pushToastMessage('success', NAME, message);
+  return this.getUIConfig();
 };
 ControllerYaM.prototype.logoutAccount = async function () {
   if (this.ownsPlayback()) await this.commandRouter.volumioStop();

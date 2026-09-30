@@ -2,9 +2,12 @@
 import json
 import os
 import hashlib
+import hmac
+import base64
 import http.client
 import re
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit, urlencode, parse_qs
@@ -33,12 +36,14 @@ def validate_yandex_token(token):
         if len(raw) > 256 * 1024:
             raise AccountError("Неожиданный ответ Яндекса")
         body = json.loads(raw)
-        account = body.get("result", {}).get("account", {})
+        result = body.get("result", {})
+        account = result.get("account", {})
         uid = account.get("uid")
         if not uid or account.get("serviceAvailable") is False:
             raise AccountError("Токен не даёт доступа к аккаунту Яндекс Музыки")
         return {"uid": str(uid), "login": str(account.get("login") or ""),
-                "display_name": str(account.get("displayName") or account.get("fullName") or account.get("login") or uid)}
+                "display_name": str(account.get("displayName") or account.get("fullName") or account.get("login") or uid),
+                "plus_active": bool((result.get("plus") or {}).get("hasPlus"))}
     except AccountError:
         raise
     except (OSError, http.client.HTTPException):
@@ -175,6 +180,42 @@ class Music:
     def __init__(self, account):
         self.account = account
 
+    def quality(self):
+        path = self.account.data / "audio-quality.json"
+        try:
+            value = json.loads(path.read_text()).get("quality")
+        except (OSError, ValueError, AttributeError):
+            value = None
+        if value in ("standard", "high", "lossless"):
+            return value
+        try:
+            account = self.account.status().get("account") or {}
+            return "lossless" if account.get("plus_active") else "high"
+        except AccountError:
+            return "high"
+
+    def set_quality(self, value):
+        if value not in ("standard", "high", "lossless"):
+            raise AccountError("Выберите обычное, максимальное или Lossless качество")
+        if value == "lossless":
+            account = self.account.status().get("account") or {}
+            if not account.get("plus_active"):
+                raise AccountError("Lossless доступен при активной подписке Яндекс Плюс")
+        path = self.account.data / "audio-quality.json"
+        temp = path.with_suffix(".tmp")
+        try:
+            descriptor = os.open(str(temp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(descriptor, "w") as file:
+                json.dump({"quality": value}, file)
+                file.flush()
+                os.fsync(file.fileno())
+            os.chmod(temp, 0o600)
+            os.replace(temp, path)
+        except OSError:
+            temp.unlink(missing_ok=True)
+            raise AccountError("Не удалось сохранить качество звука") from None
+        return {"quality": value}
+
     def session(self):
         with self.account.lock:
             value = self.account.read()
@@ -237,12 +278,17 @@ class Music:
 
     def catalog(self):
         token, _ = self.session()
-        blocks = "personalplaylists,new-releases,new-playlists,play_contexts"
+        blocks = ("personalplaylists,promotions,new-releases,new-playlists,mixes,chart,"
+                  "playlists,play_contexts")
         result = self.yandex(token, "/landing3?" + urlencode({"blocks": blocks}))
         definitions = [
             ("personal-playlists", "Подобрано для вас", "playlist"),
+            ("promotions", "В центре внимания", "mixed"),
             ("new-releases", "Новые релизы", "album"),
             ("new-playlists", "Популярные плейлисты", "playlist"),
+            ("mixes", "Миксы", "playlist"),
+            ("chart", "Чарт Яндекс Музыки", "playlist"),
+            ("playlists", "Плейлисты Яндекса", "playlist"),
             ("play-contexts", "Недавно слушали", "context"),
         ]
         aliases = {"personalplaylists": "personal-playlists", "play_contexts": "play-contexts"}
@@ -264,6 +310,33 @@ class Music:
                         if item_kind not in ("album", "playlist"):
                             continue
                         value = value.get("payload") or {}
+                    elif kind == "mixed":
+                        # Promo and editorial blocks can wrap playable entities in
+                        # one or more `data` fields, or provide a typed payload.
+                        item_kind = None
+                        for _ in range(3):
+                            if value.get("context") in ("album", "playlist"):
+                                item_kind = value["context"]
+                                value = value.get("payload") or {}
+                                break
+                            nested = value.get("data")
+                            if not isinstance(nested, dict):
+                                break
+                            value = nested
+                        if item_kind is None:
+                            owner = value.get("uid") or (value.get("owner") or {}).get("uid")
+                            if value.get("kind") is not None and owner is not None:
+                                item_kind = "playlist"
+                            elif value.get("id") is not None:
+                                item_kind = "album"
+                            else:
+                                continue
+                    elif kind == "playlist":
+                        # Ignore chart/editorial cards that are not directly
+                        # playable playlists (for example artist or promo links).
+                        owner = value.get("uid") or (value.get("owner") or {}).get("uid")
+                        if value.get("kind") is None or owner is None:
+                            continue
                     item = self.catalog_item(value, item_kind)
                 except (AccountError, KeyError, TypeError, AttributeError, ValueError):
                     # Unsupported promotional entities must not hide the library.
@@ -322,12 +395,46 @@ class Music:
         return bool(host and re.fullmatch(r"[a-zA-Z0-9.-]+", host) and
                     any(host.endswith("." + domain) for domain in ("yandex.net", "yandex.ru")))
 
-    def stream(self, token, identifier):
+    def lossless_stream(self, token, identifier):
+        identifier = identifier.split(":", 1)[0]
+        timestamp = int(time.time() * 1000)
+        codecs = "flac,mp3,flac-mp4"
+        message = f"{timestamp}{identifier}lossless{codecs}raw"
+        secret = b"kzqU4XhfCaY6B6JTHODeq5"
+        signature = base64.b64encode(hmac.new(secret, message.encode(), hashlib.sha256).digest()).decode().rstrip("=")
+        query = urlencode({"ts": timestamp, "trackId": identifier, "quality": "lossless",
+                           "codecs": codecs, "transports": "raw", "sign": signature})
+        result = self.yandex(token, "/get-file-info?" + query)
+        info = result.get("downloadInfo") if isinstance(result, dict) else None
+        if not isinstance(info, dict) or info.get("codec") != "flac" or info.get("transport") != "raw":
+            return None
+        url = info.get("url")
+        parsed = urlsplit(url or "")
+        if (parsed.scheme != "https" or not self.media_host(parsed.hostname)
+                or parsed.port not in (None, 443) or parsed.username or parsed.password):
+            raise AccountError("Некорректный адрес FLAC-потока")
+        return {"uri": url, "codec": "flac", "transport": "raw"}
+
+    def stream(self, token, identifier, quality="high"):
+        if quality == "lossless":
+            try:
+                result = self.lossless_stream(token, identifier)
+                if result:
+                    return result
+            except AccountError:
+                # Keep playback available when lossless is absent for this track
+                # or the account/API does not return an unencrypted raw stream.
+                pass
         options = self.yandex(token, f"/tracks/{identifier}/download-info")
         options = [o for o in options if o.get("codec") == "mp3" and not o.get("preview")]
         if not options:
             raise AccountError("Полная версия трека недоступна. Проверьте подписку")
-        option = max(options, key=lambda o: int(o.get("bitrateInKbps", 0)))
+        if quality == "standard":
+            standard = [o for o in options if int(o.get("bitrateInKbps", 0)) <= 192]
+            option = (max(standard, key=lambda o: int(o.get("bitrateInKbps", 0))) if standard else
+                      min(options, key=lambda o: int(o.get("bitrateInKbps", 0))))
+        else:
+            option = max(options, key=lambda o: int(o.get("bitrateInKbps", 0)))
         parsed = urlsplit(option["downloadInfoUrl"])
         if parsed.scheme not in ("http", "https") or not self.media_host(parsed.hostname) or parsed.port not in (None, 443) or parsed.username:
             raise AccountError("Некорректный адрес аудиофайла")
